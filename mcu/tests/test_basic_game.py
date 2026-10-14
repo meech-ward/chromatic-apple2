@@ -20,7 +20,7 @@ shutil.copyfile(args.disk_image, disk)
 flags = ['-std=c11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
          '-DMII_RP2350=0', '-DMII_65C02_DIRECT_ACCESS=1', '-Imain', '-Imain/vendor/mii']
 if 'clang' in subprocess.run(['cc', '--version'], capture_output=True, text=True, check=True).stdout:
-    flags.append('-Wno-unterminated-string-initialization')
+    flags.extend(['-Wno-unknown-warning-option', '-Wno-unterminated-string-initialization'])
 if args.sanitize:
     flags.append('-fsanitize=address,undefined')
 subprocess.run(['cc', *flags, 'main/apple2.c', 'main/disk2.c', 'main/vendor/mii/mii_65c02.c',

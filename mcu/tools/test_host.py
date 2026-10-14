@@ -22,7 +22,7 @@ flags = ['-std=c11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
 version = subprocess.run(['cc', '--version'], capture_output=True, text=True, check=True).stdout
 if 'clang' in version:
     # Upstream opcode names intentionally fill four bytes without a trailing NUL.
-    flags.append('-Wno-unterminated-string-initialization')
+    flags.extend(['-Wno-unknown-warning-option', '-Wno-unterminated-string-initialization'])
 if args.sanitize:
     flags.append('-fsanitize=address,undefined')
 sources = ['main/apple2.c', 'main/disk2.c', 'main/vendor/mii/mii_65c02.c']

@@ -79,12 +79,12 @@ def main():
     version = subprocess.run([*compiler, '--version'], capture_output=True, text=True, check=True).stdout
     if 'clang' in version:
         # Recent Clang diagnoses the upstream CPU's intentionally four-byte names.
-        warning = '-Wno-unterminated-string-initialization'
-        supported = subprocess.run([*compiler, '-Werror', warning, '-x', 'c', '-c', '-',
+        warnings = ['-Wno-unknown-warning-option', '-Wno-unterminated-string-initialization']
+        supported = subprocess.run([*compiler, '-Werror', *warnings, '-x', 'c', '-c', '-',
                                     '-o', str(BUILD / 'warning_probe.o')],
                                    input='int check;\n', text=True, capture_output=True, timeout=30)
         if supported.returncode == 0:
-            flags.append(warning)
+            flags.extend(warnings)
     includes = ['-Imain', '-Imain/vendor/mii', '-I../storage']
     cpu_flags = ['-DMII_RP2350=0', '-DMII_65C02_DIRECT_ACCESS=1']
     cpu = ['main/apple2.c', 'main/disk2.c', 'main/vendor/mii/mii_65c02.c']

@@ -15,7 +15,7 @@ subprocess.run([str(program)], check=True, timeout=20)
 image = work / 'audio_diagnostic_image.c'
 subprocess.run([sys.executable, str(base / 'tools/embed_rom.py'), '--output', str(image)], check=True)
 program = work / 'audio_hook_test'
-flags += ['-Wno-unused-parameter', '-Wno-unterminated-string-initialization',
+flags += ['-Wno-unused-parameter', '-Wno-unknown-warning-option', '-Wno-unterminated-string-initialization',
           '-DMII_RP2350=0', '-DMII_65C02_DIRECT_ACCESS=1', '-Imain/vendor/mii']
 subprocess.run(['cc', *flags, 'main/apple2.c', 'main/disk2.c', 'main/vendor/mii/mii_65c02.c',
                 str(image), 'tests/audio_hook_test.c', '-o', str(program)], cwd=base, check=True, timeout=30)
