@@ -1,0 +1,33 @@
+name: Source checks
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install host test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang make iverilog openssh-client
+      - name: Fetch test-only Mbed TLS sources
+        uses: actions/checkout@v4
+        with:
+          repository: Mbed-TLS/mbedtls
+          # Official v3.6.4; test dependency only, never a device credential/ROM.
+          ref: c765c831e5c2a0971410692f92f7a81d6ec65ec2
+          path: build/ci-mbedtls
+          persist-credentials: false
+      - name: Test public sources without hardware or Apple ROMs
+        env:
+          CC: clang
+          CXX: clang++
+          UBSAN_OPTIONS: halt_on_error=1
+        run: python3 tools/check.py --require-sanitizers --require-rtl --mbedtls build/ci-mbedtls

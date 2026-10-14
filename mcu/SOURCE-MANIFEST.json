@@ -1,0 +1,48 @@
+{
+  "reused_sources": [
+    {
+      "file": "main/vendor/mii/mii_65c02.c",
+      "origin": "https://github.com/rh1tech/frank-apple",
+      "commit": "ab8101972887c01c6287fd5449a82fb12e68251c",
+      "origin_path": "src/mii_65c02.c",
+      "source_sha256": "2aa67f6e8b18207ba43afafc00c213831fbe1d848712b6e3db14987734eb9e3c",
+      "license": "MIT (retained source SPDX/copyright)",
+      "changes": [
+        "Removed unused minipt.h include; this target uses MII_65C02_DIRECT_ACCESS=1 and MII_RP2350=0."
+      ]
+    },
+    {
+      "file": "main/vendor/mii/mii_65c02.h",
+      "origin": "https://github.com/rh1tech/frank-apple",
+      "commit": "ab8101972887c01c6287fd5449a82fb12e68251c",
+      "origin_path": "src/mii_65c02.h",
+      "source_sha256": "d35304f084e047506b42090fc03b5f9bbbdc4c8a72b013a5bd45d986208d0505",
+      "license": "MIT (retained source SPDX/copyright)",
+      "changes": []
+    },
+    {
+      "file": "main/vendor/mii/mii_65c02_ops.h",
+      "origin": "https://github.com/rh1tech/frank-apple",
+      "commit": "ab8101972887c01c6287fd5449a82fb12e68251c",
+      "origin_path": "src/mii_65c02_ops.h",
+      "source_sha256": "a6a845d4696e7b33c0c7d86f7ac4d494763bf4b78938837cc4c7c3d98702427d",
+      "license": "MIT (retained source SPDX/copyright)",
+      "changes": []
+    },
+    {
+      "file": "main/disk2.c",
+      "origin": "https://github.com/rh1tech/frank-apple",
+      "commit": "ab8101972887c01c6287fd5449a82fb12e68251c",
+      "origin_path": "src/mii_dsk.c",
+      "source_sha256": "8b2e3c36ccb004dcc5f29492ea35b9a701de79412702c7fcd465a45ffb57e7ac",
+      "license": "MIT",
+      "changes": [
+        "Adapted only TRANS62/DO tables and 6-and-2 sector codec algorithms to bounded portable buffers. Byte-track controller/backend implementation is new."
+      ],
+      "ancestry": "MII credits Apple2JS format_utils.ts at e280c3d; https://github.com/whscullin/apple2js/blob/main/LICENSE confirms MIT, Copyright (c) 2010-2021 Will Scullin and contributors; retained licenses/Apple2JS-MIT.txt."
+    }
+  ],
+  "new_sources_license": "MIT; file-level SPDX notices",
+  "sdk": "ESP-IDF v5.3, external dependency; retains its component licenses",
+  "roms": "Default original 6502 diagnostic only. Optional user ROM is an external build input, not included in this source tree. No Apple ROM license grant is made."
+}

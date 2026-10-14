@@ -1,0 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Physical board facts: 33.554432 MHz oscillator and red status LED.
+IO_LOC "CLK_FPGA" M2;
+IO_PORT "CLK_FPGA" IO_TYPE=LVCMOS18;
+IO_LOC "FPGA_LED_R" A6;
+IO_PORT "FPGA_LED_R" IO_TYPE=LVCMOS33;
