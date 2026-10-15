@@ -1,4 +1,5 @@
 {
+  "wifi_mode": "station",
   "wifi_ssid": "YOUR_WIFI_NETWORK",
   "wifi_password": "YOUR_WIFI_PASSWORD",
   "api_token": "GENERATE_A_UNIQUE_RANDOM_TOKEN_AT_LEAST_32_CHARACTERS",

@@ -9,12 +9,15 @@ static bool blocked, text_busy, interrupt_pending, stored;
 static size_t stored_size=32, write_limit=7;
 static unsigned random_calls, commits, creates;
 static int commit_error;
+static bool gate_test;
+static unsigned ready_polls, readiness_delays, seed_accesses;
 void esp_fill_random(void *p,size_t n) { random_calls++;memset(p,0x42,n); }
 int64_t esp_timer_get_time(void) { return 1000; }
-esp_err_t esp_wifi_sta_get_ap_info(wifi_ap_record_t *p) { (void)p;return ESP_OK; }
+bool network_ready(void) { return !gate_test || ++ready_polls >= 4; }
 esp_err_t nvs_open(const char *s,int mode,nvs_handle_t *h) { assert(!strcmp(s,"a2_ssh") && mode==NVS_READWRITE);*h=1;return 0; }
 esp_err_t nvs_get_blob(nvs_handle_t h,const char *key,void *p,size_t *n) {
-    (void)h;assert(!strcmp(key,"host_seed"));if(!stored)return ESP_ERR_NVS_NOT_FOUND;
+    (void)h;if(gate_test){assert(ready_polls==4);seed_accesses++;}
+    assert(!strcmp(key,"host_seed"));if(!stored)return ESP_ERR_NVS_NOT_FOUND;
     assert(*n>=stored_size);memcpy(p,stored_seed,stored_size);*n=stored_size;return 0;
 }
 esp_err_t nvs_set_blob(nvs_handle_t h,const char *key,const void *p,size_t n) {
@@ -22,14 +25,16 @@ esp_err_t nvs_set_blob(nvs_handle_t h,const char *key,const void *p,size_t n) {
 }
 esp_err_t nvs_commit(nvs_handle_t h) { (void)h;commits++;return commit_error; }
 void nvs_close(nvs_handle_t h) { (void)h; }
-void vTaskDelay(unsigned ticks) { (void)ticks; }
+void vTaskDelay(unsigned ticks) {
+    if(gate_test){assert(ticks==250 && !seed_accesses);readiness_delays++;}
+}
 void vTaskDelete(TaskHandle_t h) { (void)h; }
 int xTaskCreatePinnedToCore(void (*fn)(void *),const char *name,unsigned stack,void *arg,unsigned priority,TaskHandle_t *h,int core) {
     assert(fn && !strcmp(name,"apple2_ssh") && stack==12288 && !arg && priority==3 && core==0);
     creates++;*h=(void *)1;return pdPASS;
 }
 void mbedtls_platform_zeroize(void *p,size_t n) { memset(p,0,n); }
-bool ssh_transport_init(const uint8_t seed[32],const char *password) { (void)seed;(void)password;return true; }
+bool ssh_transport_init(const uint8_t seed[32],const char *password) { (void)seed;(void)password;return !gate_test; }
 bool ssh_transport_set_enabled(bool enabled) { return enabled; }
 void ssh_transport_poll(void) {}
 bool ssh_transport_connected(void) { return true; }
@@ -94,6 +99,8 @@ int main(void) {
     text[5*41+4]='X';assert(screen() && output_length<80);
     while(output_length)send_output();
     assert(strstr(captured,"\033[6;1HAAAAX"));
-    puts("PASS actual SSH terminal: durable/test-failed seed,12KiB task, arrows/Return/Backspace/menu/ESC/paste/interrupt, key backpressure, changed-row snapshots and partial output");
+    gate_test=true;stored=false;commit_error=0;ssh_task(NULL);
+    assert(ready_polls==4 && readiness_delays==3 && seed_accesses==1);
+    puts("PASS actual SSH terminal: station/hotspot network readiness, durable/test-failed seed,12KiB task, arrows/Return/Backspace/menu/ESC/paste/interrupt, key backpressure, changed-row snapshots and partial output");
     return 0;
 }

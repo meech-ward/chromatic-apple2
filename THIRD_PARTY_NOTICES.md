@@ -24,3 +24,10 @@ credentials is a private build artifact, not a source-release attachment.
 No ModRetro or MiSTer FPGA implementation or proprietary Gowin IP is included.
 This is an independent homebrew project, not an official ModRetro or Apple
 product.
+
+## README illustration
+
+`assets/chromatic-apple2.png` is an AI composite using [ModRetro’s official
+Cloud product image](https://modretro.com/cdn/shop/files/Chr_Cloud.png?v=1779222065&width=1600).
+The stock imagery and product marks belong to ModRetro; the project’s MIT license
+does not grant rights to them. The illustration is not a device screenshot.

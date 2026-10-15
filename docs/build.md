@@ -30,7 +30,8 @@ The default build embeds an original 6502 diagnostic and no Wi-Fi credentials:
 idf.py -C mcu -DFPGA_UART_BAUD=921600 build
 ```
 
-For BASIC, DOS, HTTP control and SSH, prepare private inputs:
+For BASIC, DOS, HTTP control and SSH, prepare private inputs.
+[Wi-Fi setup](wifi.md) explains network choices, credentials and connecting.
 
 ```sh
 python3 tools/configure.py

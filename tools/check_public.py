@@ -15,6 +15,8 @@ FORBIDDEN_SUFFIXES = {'.rom', '.dsk', '.do', '.po', '.nib', '.woz', '.img', '.bi
                       '.elf', '.uf2', '.fs', '.map', '.eml', '.pem', '.key', '.log', '.pyc'}
 FORBIDDEN_NAMES = {'sdkconfig', 'sdkconfig.old', 'device-local.json', 'rom_image.c'}
 TEST_CONFIG = 'mcu/main/ssh/tests/stubs/private_config.h'
+README_IMAGE = 'assets/chromatic-apple2.png'
+PNG_SIGNATURE = bytes.fromhex('89504e470d0a1a0a')
 
 
 def source_files(root):
@@ -41,16 +43,24 @@ def problems(root, files, secrets=()):
             continue
         try:
             data = path.read_bytes()
+        except OSError:
+            failures.append(f'{name}: expected a readable source file')
+            continue
+        if any(secret.encode() in data for secret in secrets if len(secret) >= 8):
+            failures.append(f'{name}: matches a private setting (value withheld)')
+        if name == README_IMAGE:
+            if len(data) > 2 * 1024 * 1024 or not data.startswith(PNG_SIGNATURE):
+                failures.append(f'{name}: expected a PNG image no larger than 2 MiB')
+            continue
+        try:
             content = data.decode('utf-8')
-        except (OSError, UnicodeError):
+        except UnicodeError:
             failures.append(f'{name}: expected a readable UTF-8 source file')
             continue
         if '\0' in content:
             failures.append(f'{name}: binary content in source package')
         if re.search(r'/(?:Users|home)/[A-Za-z0-9_.-]+/', content):
             failures.append(f'{name}: machine-specific home path')
-        if any(secret.encode() in data for secret in secrets if len(secret) >= 8):
-            failures.append(f'{name}: matches a private setting (value withheld)')
         if path.suffix.lower() == '.md':
             for target in re.findall(r'!?\[[^\]]*\]\(([^\s)]+)\)', content):
                 target = target.strip('<>')

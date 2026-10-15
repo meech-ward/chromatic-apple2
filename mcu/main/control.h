@@ -2,6 +2,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>
+#include "network.h"
 bool control_command(const char *command, char *output, size_t capacity);
 void control_status(char *output, size_t capacity);
 void control_text(char *output, size_t capacity);
@@ -17,5 +18,3 @@ bool control_import_write(const void *data, size_t size);
 bool control_import_finish(void);
 void control_import_abort(void);
 int control_storage_error(void);
-void network_start(void);
-const char *network_ip(void);

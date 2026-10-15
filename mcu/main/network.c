@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 #include "control.h"
+#include "network.h"
 #include "private_config.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdatomic.h>
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_netif.h"
@@ -11,9 +13,17 @@
 
 static char device_ip[16] = "0.0.0.0";
 const char *network_ip(void) { return device_ip; }
+static atomic_bool ready;
+bool network_ready(void) { return atomic_load(&ready); }
+
+#ifndef DEVICE_WIFI_AP
+#define DEVICE_WIFI_AP 0
+#endif
 
 #if DEVICE_WIFI_ENABLED
 static char response[4096];
+static esp_netif_t *wifi_netif;
+static bool server_started;
 
 static bool authorized(httpd_req_t *request)
 {
@@ -162,37 +172,9 @@ static esp_err_t handle_disk(httpd_req_t *request)
     return httpd_resp_sendstr(request, message);
 }
 
-static void wifi_event(void *unused, esp_event_base_t base, int32_t id, void *data)
+static void start_server(void)
 {
-    (void)unused;
-    if (base == WIFI_EVENT && (id == WIFI_EVENT_STA_START || id == WIFI_EVENT_STA_DISCONNECTED)) {
-        strcpy(device_ip, "0.0.0.0");
-        esp_wifi_connect();
-    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        const ip_event_got_ip_t *event = data;
-        snprintf(device_ip, sizeof(device_ip), IPSTR, IP2STR(&event->ip_info.ip));
-        printf("CHROMATIC_APPLE2_IP %s\n", device_ip);
-    }
-}
-
-void network_start(void)
-{
-    // Keep Wi-Fi config in RAM; do not erase or replace the console's existing NVS.
-    ESP_ERROR_CHECK(nvs_flash_init());
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(esp_netif_create_default_wifi_sta() ? ESP_OK : ESP_ERR_NO_MEM);
-    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&init));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event, NULL));
-    wifi_config_t config = {0};
-    memcpy(config.sta.ssid, DEVICE_WIFI_SSID, strlen(DEVICE_WIFI_SSID));
-    memcpy(config.sta.password, DEVICE_WIFI_PASSWORD, strlen(DEVICE_WIFI_PASSWORD));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &config));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    if (server_started) return;
     httpd_config_t http_config = HTTPD_DEFAULT_CONFIG();
     http_config.stack_size = 8192;
     http_config.max_uri_handlers = 4;
@@ -212,7 +194,84 @@ void network_start(void)
     };
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); ++i)
         ESP_ERROR_CHECK(httpd_register_uri_handler(server, &routes[i]));
+    server_started = true;
 }
+
+static void publish_address(const esp_netif_ip_info_t *info)
+{
+    snprintf(device_ip, sizeof(device_ip), IPSTR, IP2STR(&info->ip));
+    start_server();
+    /* SSH may generate its host key only after Wi-Fi has started. AP_START is
+     * the equivalent of station address acquisition for hotspot mode.
+     */
+    atomic_store(&ready, true);
+    printf("CHROMATIC_APPLE2_IP %s\n", device_ip);
+}
+
+static void wifi_event(void *unused, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)unused;
+#if DEVICE_WIFI_AP
+    (void)data;
+    if (base == WIFI_EVENT && id == WIFI_EVENT_AP_START) {
+        esp_netif_ip_info_t info;
+        ESP_ERROR_CHECK(esp_netif_get_ip_info(wifi_netif, &info));
+        publish_address(&info);
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STOP) {
+        atomic_store(&ready, false);
+        strcpy(device_ip, "0.0.0.0");
+    }
+#else
+    if (base == WIFI_EVENT && (id == WIFI_EVENT_STA_START || id == WIFI_EVENT_STA_DISCONNECTED)) {
+        atomic_store(&ready, false);
+        strcpy(device_ip, "0.0.0.0");
+        (void)esp_wifi_connect();
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        const ip_event_got_ip_t *event = data;
+        publish_address(&event->ip_info);
+    }
+#endif
+}
+
+void network_start(void)
+{
+    // Keep Wi-Fi config in RAM; do not erase or replace the console's existing NVS.
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+#if DEVICE_WIFI_AP
+    wifi_netif = esp_netif_create_default_wifi_ap();
+#else
+    wifi_netif = esp_netif_create_default_wifi_sta();
+#endif
+    ESP_ERROR_CHECK(wifi_netif ? ESP_OK : ESP_ERR_NO_MEM);
+    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&init));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, NULL));
+#if !DEVICE_WIFI_AP
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event, NULL));
+#endif
+    wifi_config_t config = {0};
+#if DEVICE_WIFI_AP
+    memcpy(config.ap.ssid, DEVICE_WIFI_SSID, strlen(DEVICE_WIFI_SSID));
+    config.ap.ssid_len = strlen(DEVICE_WIFI_SSID);
+    memcpy(config.ap.password, DEVICE_WIFI_PASSWORD, strlen(DEVICE_WIFI_PASSWORD));
+    config.ap.channel = 1;
+    config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    config.ap.max_connection = 1;
+    config.ap.beacon_interval = 100;
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &config));
+#else
+    memcpy(config.sta.ssid, DEVICE_WIFI_SSID, strlen(DEVICE_WIFI_SSID));
+    memcpy(config.sta.password, DEVICE_WIFI_PASSWORD, strlen(DEVICE_WIFI_PASSWORD));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &config));
+#endif
+    ESP_ERROR_CHECK(esp_wifi_start());
+}
+
 #else
 void network_start(void) { puts("CHROMATIC_APPLE2_WIFI disabled (no private build config)"); }
 #endif

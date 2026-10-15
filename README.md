@@ -1,5 +1,9 @@
 # Apple II on Chromatic
 
+![Apple II startup screen illustrated on a ModRetro Chromatic](assets/chromatic-apple2.png)
+
+*Illustrative AI composite using [ModRetro’s stock product image](https://modretro.com/cdn/shop/files/Chr_Cloud.png?v=1779222065&width=1600); not a device screenshot.*
+
 A small Apple II environment for the ModRetro Chromatic. The ESP32 runs the CPU,
 48 KiB of emulated RAM, graphics and Disk II emulation. An original FPGA design
 connects the display, buttons, speaker and cartridge.
@@ -24,7 +28,7 @@ program launch and SSH. Codec configuration and digital audio transport were
 checked; speaker listening remains unverified. See the
 [verification record](docs/verification.md) for the distinction.
 
-Start with the [build guide](docs/build.md), then read
+Start with the [build guide](docs/build.md) and [Wi-Fi setup](docs/wifi.md), then read
 [installation and recovery](docs/install.md) before programming hardware.
 [Controls, disks and the local API](docs/usage.md) cover everyday use.
 The [sharing guide](docs/sharing.md) explains preparing your own public copy.

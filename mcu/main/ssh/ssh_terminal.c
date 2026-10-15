@@ -6,7 +6,6 @@
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
-#include "esp_wifi.h"
 #include "nvs.h"
 #include "mbedtls/platform_util.h"
 #include "freertos/FreeRTOS.h"
@@ -132,8 +131,7 @@ static void input(uint32_t now) {
 }
 static void ssh_task(void *unused) {
     (void)unused;
-    wifi_ap_record_t access_point;
-    while (esp_wifi_sta_get_ap_info(&access_point) != ESP_OK) vTaskDelay(pdMS_TO_TICKS(250));
+    while (!network_ready()) vTaskDelay(pdMS_TO_TICKS(250));
     uint8_t seed[32]; esp_err_t error = host_seed(seed);
     bool ready = error == ESP_OK && ssh_transport_init(seed, DEVICE_SSH_PASSWORD);
     mbedtls_platform_zeroize(seed, sizeof(seed));
