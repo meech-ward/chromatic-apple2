@@ -30,17 +30,29 @@ Dense scenes and periodic recovery redraws still take about 92 ms on the wire.
 These transfers, game steps and the physical LCD scan rate are different
 measurements. Cartridge service and heavy remote activity can interrupt emulation.
 
-Repeatable real-ROM Breakout benchmarks at the same 1.023 MHz CPU speed:
+The sideways Brick Out game was tested with the actual Applesoft ROM and a
+disposable DOS disk on 2026-10-15: all 160 bricks and 720 points, five balls,
+contact angles, ten-return acceleration, B pause, instruction-by-instruction ball
+visibility, and SAVE/reopen/reboot/LOAD/RUN before and after native code ran.
+Automated checks on the development Chromatic verified every saved source line,
+restart/reload, a single `BREAKOUT` catalog entry, held Up/Down and SSH controls,
+A/Space serve, B pause/resume, Ctrl-C/CONT, MENU pause/resume and program-browser
+launch. Emulation measured 1.018 MHz during a short SSH-connected game segment;
+storage, display and audio error counters stayed zero. The owner has not yet
+reported a visual playtest of this version.
 
-| Game-loop scenario | Previous steps/s | Current steps/s |
-| --- | ---: | ---: |
-| Ball in clear field | 9.70 | 19.53 |
-| Holding a direction at the paddle limit | 6.68 | 19.54 |
-| Moving and redrawing the paddle | 6.04 | 14.71 |
+Current real-ROM clear-field benchmarks at the same 1.023 MHz CPU speed:
 
-The game keeps its physics in BASIC and uses an original 173-byte 6502 helper
-for input and paddle drawing. These loop benchmarks exclude brick-hit scoring
-and game transitions; they are not whole-game frame-rate guarantees.
+| Game-loop scenario | Steps/s |
+| --- | ---: |
+| Ball in clear field | 21.93 |
+| Holding DOWN at the paddle limit | 21.93 |
+| Moving and redrawing the paddle | 15.94 |
+
+The game keeps its physics in BASIC and uses an original 335-byte 6502 helper
+for input, vertical paddle drawing and speaker clicks. Each current benchmark
+follows 16 clear-field steps. They exclude brick-hit scoring, sound events and
+game transitions; they are not whole-game frame-rate guarantees.
 
 The CPU uses the MII 65C02 core; cycle-exact NMOS 6502 behavior and undocumented
 opcode compatibility are not guaranteed. The emulated machine has 48 KiB main

@@ -27,9 +27,12 @@ CPU pauses or the program list is read. The on-screen keyboard keeps emulation
 running so typed characters can be consumed. Physical MENU presses are retained
 across delayed polling. Device Info shows the assigned IP and storage state.
 
-The included original [Breakout source](../basic/BREAKOUT.bas) uses held left/right
-to move, A to launch and B to pause. Its BASIC game logic uses a small original
-6502 routine for input and paddle drawing. The readable
+The included original [Breakout source](../basic/BREAKOUT.bas) recreates the sideways
+Apple II game: held **Up/Down** move the left paddle, **A** serves, and **B**
+pauses. Cursor Up/Down or W/S work through SSH. Its BASIC game logic retains
+native input/paddle drawing and flicker-free ball updates.
+[Game details and historical references](breakout.md) explain the rules and
+handheld adaptations. The readable
 [helper generator](../tools/generate_breakout_input.py) reproduces its embedded
 DATA lines; `python3 tools/generate_breakout_input.py --check basic/BREAKOUT.bas`
 checks that they match. BASIC programs can read the held-button mask
