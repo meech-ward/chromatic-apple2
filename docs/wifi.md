@@ -1,110 +1,102 @@
 # Wi-Fi setup
 
-Choose one network mode when building the ESP32 application:
+Change the network from your phone or computer. Settings are saved on the
+Chromatic and survive power-off; no rebuild or reinstall is needed.
 
-| Mode | How you connect |
-| --- | --- |
-| `station` (default) | Chromatic joins your existing 2.4 GHz Wi-Fi network, including a compatible phone hotspot. |
-| `hotspot` | Chromatic creates a private WPA2 network. Connect your computer directly to it; no router is needed. |
+## Change Wi-Fi
 
-SSH and HTTP control work locally. Internet access is not required. Hotspot mode
-provides access to the Chromatic, not an internet connection. There is no automatic
-fallback, simultaneous router/hotspot mode, captive portal or handheld setup screen.
+1. Open the Chromatic's MENU and choose **WI-FI SETUP**.
+2. On your phone or computer, join **CHROMATIC-XXXXXX**, using the setup password
+   shown on the handheld. Stay connected when warned that there is no internet.
+   The setup password is saved on the device, so your phone can remember it.
+3. Open **http://192.168.4.1** in a browser.
+4. Choose **Join an existing Wi-Fi network** or **Create a Chromatic hotspot**,
+   enter the network name and password, then select **Save Wi-Fi settings**.
 
-## Configure
+For an existing network, the page tests the connection and shows its assigned IP
+address. The setup network remains available during this check. After it
+connects, press **B** or **MENU** to close setup, reconnect your computer to the
+regular network, and use the displayed address for SSH.
 
-For an existing Wi-Fi network:
+For a Chromatic hotspot, the settings take effect when you close setup with
+**B** or **MENU**, or restart the device. Join the network you just saved; the
+Chromatic's address is **192.168.4.1**. No router is needed. This hotspot provides
+local access to the Chromatic, not an internet connection.
 
-```sh
-python3 tools/configure.py
-```
+Existing networks must provide 2.4 GHz WPA2-Personal Wi-Fi. New passwords must
+contain 8–63 printable ASCII characters; station mode also accepts a 64-digit
+hexadecimal key. Enterprise authentication and captive-portal sign-in are not
+supported. A compatible phone hotspot uses the existing-network option; that
+particular arrangement has not been physically tested.
 
-Enter its exact network name and Wi-Fi password, then choose a separate SSH
-password or leave it blank to generate one. Use a 2.4 GHz WPA2-Personal network;
-enterprise authentication and captive-portal sign-in are not configured. Joining
-a phone hotspot uses this same mode; it has not been physically tested.
+## If the connection fails
 
-To create a Chromatic hotspot instead:
+After about 25 seconds without a station connection, the Chromatic starts its
+protected setup network. Open **MENU → WI-FI SETUP** to see its name and password,
+then follow the steps above. Check the exact network name and password before
+saving again. Connection attempts pause during recovery so the setup network stays
+available. Saving new details or closing setup starts another attempt. You do not
+need a factory reset or a firmware rebuild.
 
-```sh
-python3 tools/configure.py --wifi-mode hotspot --output build/hotspot-local.json
-```
+Opening setup while using a Chromatic hotspot temporarily replaces that hotspot
+with the setup network. Your saved settings remain intact until you select
+**Save**. Closing setup restores the selected hotspot.
 
-Choose the network name your computer will see. The hotspot password must contain
-8–63 printable ASCII characters; leave it blank to generate a random password.
-Open hotspots are refused. One computer can connect at a time.
+Guest-network isolation, a VPN, or a second interface using `192.168.4.x` can
+prevent local access. For a direct hotspot connection, stay on its network even
+though it has no internet.
 
-The tool generates an HTTP API token and writes owner-only (`0600`) settings. It
-does not print passwords or overwrite an existing file. Read `wifi_password` and
-`ssh_password` in that private file when connecting; they are separate passwords.
+## SSH and local control
 
-## Build and install
-
-Follow [Building](build.md#esp32-application), selecting the appropriate file:
-
-```sh
-# Existing network:
--DPRIVATE_CONFIG="$PWD/build/device-local.json"
-
-# Chromatic hotspot:
--DPRIVATE_CONFIG="$PWD/build/hotspot-local.json"
-```
-
-These are options for the documented build command, not standalone shell commands.
-Then follow [installation and recovery](install.md). A default diagnostic build
-without `PRIVATE_CONFIG` has networking disabled.
-
-Settings are compiled into the application. Changing mode, network or passwords
-requires rebuilding and reinstalling it. Existing configuration files without
-`wifi_mode` retain station mode. The [example](../examples/device-local.example.json)
-shows the fields; its placeholders cannot be used as credentials.
-
-Keep settings and provisioned firmware private: the binary includes credentials
-and supplied ROMs. HTTP control is unencrypted and token-protected; use a trusted
-network. SSH encrypts the terminal connection.
-
-## Connect
-
-In station mode, connect your computer to the same reachable network. Open the
-Chromatic's MENU → Device Info and read its assigned IP address. DHCP addresses
-can change after a restart; station mode reconnects if Wi-Fi drops.
-
-In hotspot mode, join the configured Chromatic network with `wifi_password`.
-Accept your computer's “no internet” notice and stay connected. Device Info shows
-`192.168.4.1`. Then open the Apple II terminal:
+Read the current address in **MENU → Device Info**, then connect:
 
 ```sh
 ssh apple@DEVICE_IP
 ```
 
-Replace `DEVICE_IP` with the displayed address; for hotspot mode use
-`ssh apple@192.168.4.1`. Enter `ssh_password` from the installed configuration.
-Only one SSH session is supported.
+For a Chromatic hotspot, use `ssh apple@192.168.4.1`. Enter the SSH password from
+your private build settings. The SSH password is separate from the Wi-Fi password;
+changing Wi-Fi keeps the SSH identity, API token and cartridge programs intact.
+One device can join the setup network or hotspot at a time. Only one SSH
+session is supported.
 
-For HTTP status on the hotspot:
+For HTTP control, use the installed build's private settings and current address:
 
 ```sh
-python3 client.py --host 192.168.4.1 --config build/hotspot-local.json status
+python3 client.py --host DEVICE_IP --config build/device-local.json status
 ```
 
-[Remote access](usage.md#local-http-control) also covers disk import and commands.
+The client's token remains valid after a Wi-Fi change. Its configured Wi-Fi name
+and password are only initial build defaults, not a copy of the device's current
+settings. [Remote access](usage.md#local-http-control) covers commands and disk
+import.
 
-## Check the connection
+## First build
 
-After installing either mode, verify Device Info, SSH login, terminal input and
-HTTP status. Disconnect/reconnect the computer, then check that a fresh SSH login
-works. In hotspot mode, confirm the computer received a `192.168.4.x` DHCP address.
-Host tests cover configuration validation and both network event paths. The
-[hardware verification](verification.md) covers a Mac joining the Chromatic
-hotspot, SSH, BASIC save/load and Wi-Fi reconnection.
+For a new installation, create private bootstrap settings:
 
-If connecting fails:
+```sh
+python3 tools/configure.py
+```
 
-- `0.0.0.0` means the network is not ready. Check that the installed build used the
-  intended private file and that the SSID/password are exact.
-- Station mode needs 2.4 GHz. Guest-network/client isolation can block access even
-  when both devices have addresses.
-- For a Chromatic hotspot, stay on its network despite the lack of internet. A VPN
-  or another interface using `192.168.4.x` may interfere with the local route.
-- Close another SSH session before opening a new one. Use the SSH password for
-  SSH and the Wi-Fi password to join the hotspot.
+Or choose a hotspot as the initial mode:
+
+```sh
+python3 tools/configure.py --wifi-mode hotspot --output build/hotspot-local.json
+```
+
+The tool prompts for Wi-Fi and SSH settings, generates an API token, and writes
+an owner-only (`0600`) file. Follow [Building](build.md#esp32-application) and
+[installation and recovery](install.md). A diagnostic build without
+`PRIVATE_CONFIG` has networking disabled.
+
+The compiled Wi-Fi settings are used until you save a profile through setup.
+That profile is stored separately on the device and takes precedence on later
+starts. SSH/API credentials still come from the private build settings. Keep
+those files and provisioned firmware private: binaries include bootstrap
+credentials and any supplied ROMs.
+
+Setup is available only through the temporary protected network, with request
+checks and a per-session form token. It is not an unauthenticated settings page
+on your home network. See the [verification record](verification.md) for tested
+hardware behavior.

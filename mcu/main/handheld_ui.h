@@ -16,7 +16,7 @@ enum {
 
 typedef enum {
     HANDHELD_UI_HIDDEN, HANDHELD_UI_MENU, HANDHELD_UI_KEYBOARD, HANDHELD_UI_INFO,
-    HANDHELD_UI_PROGRAMS,
+    HANDHELD_UI_PROGRAMS, HANDHELD_UI_WIFI_SETUP,
 } handheld_ui_mode_t;
 
 typedef enum {
@@ -24,6 +24,7 @@ typedef enum {
     HANDHELD_ACTION_CATALOG, HANDHELD_ACTION_SAVE_BASIC,
     HANDHELD_ACTION_LOAD_BASIC, HANDHELD_ACTION_RESTART,
     HANDHELD_ACTION_OPEN_PROGRAMS, HANDHELD_ACTION_RUN_PROGRAM,
+    HANDHELD_ACTION_START_WIFI_SETUP, HANDHELD_ACTION_STOP_WIFI_SETUP,
 } handheld_ui_action_t;
 
 typedef struct {
@@ -40,6 +41,10 @@ typedef struct {
     const char *disk_state;
     const char *status;
     const char *input_line;         /* Optional current Apple II input row. */
+    const char *wifi_setup_ssid;    /* Uppercase, matching the text display. */
+    const char *wifi_setup_password;
+    const char *wifi_setup_url;
+    const char *wifi_setup_status;
 } handheld_ui_info_t;
 
 typedef struct {

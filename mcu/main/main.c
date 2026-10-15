@@ -136,7 +136,11 @@ static void render_ui_unlocked(void)
 {
     char input[41];
     apple2_text_line(&machine,23,input);
+    network_setup_info_t wifi;
+    network_setup_info(&wifi);
     const handheld_ui_info_t info={.ip=network_ip(),
+        .wifi_setup_ssid=wifi.ssid,.wifi_setup_password=wifi.password,
+        .wifi_setup_url=wifi.url,.wifi_setup_status=wifi.status,
         .free_heap=heap_caps_get_free_size(MALLOC_CAP_8BIT),
         .disk_name=cart_storage_name(),
         .disk_state=cart_storage_error() ? "STORAGE NOT READY" :
@@ -484,6 +488,11 @@ static void input_task(void *unused)
             const handheld_ui_event_t event=sample_physical_buttons(buttons,menu,
                                                                    esp_timer_get_time()/1000);
             machine.buttons=handheld_ui_visible(&ui) ? 0 : ui.stable_buttons & ~ui.blocked_buttons & 255;
+            if (event.action==HANDHELD_ACTION_START_WIFI_SETUP) {
+                ui_status[0]=0;
+                if (!network_setup_start()) snprintf(ui_status,sizeof(ui_status),"WI-FI SETUP UNAVAILABLE - TRY AGAIN");
+            }
+            if (event.action==HANDHELD_ACTION_STOP_WIFI_SETUP) network_setup_stop();
             if (event.action==HANDHELD_ACTION_OPEN_PROGRAMS) refresh_programs();
             if (catalog_pending && !cart_storage_saving()) refresh_programs();
             if (event.action==HANDHELD_ACTION_RUN_PROGRAM) {

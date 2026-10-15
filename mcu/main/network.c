@@ -10,6 +10,13 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
+#include "wifi_settings.h"
+#include "wifi_store.h"
+#include "wifi_portal.h"
+#include "esp_random.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "lwip/sockets.h"
 
 static char device_ip[16] = "0.0.0.0";
 const char *network_ip(void) { return device_ip; }
@@ -21,8 +28,10 @@ bool network_ready(void) { return atomic_load(&ready); }
 #endif
 
 #if DEVICE_WIFI_ENABLED
-static char response[4096];
-static esp_netif_t *wifi_netif;
+#if defined(CONFIG_HTTPD_MAX_REQ_HDR_LEN) && CONFIG_HTTPD_MAX_REQ_HDR_LEN < 1536
+#error "Wi-Fi setup needs CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048 for normal browsers"
+#endif
+static char response[6144];
 static bool server_started;
 
 static bool authorized(httpd_req_t *request)
@@ -172,106 +181,394 @@ static esp_err_t handle_disk(httpd_req_t *request)
     return httpd_resp_sendstr(request, message);
 }
 
+static void start_server(void);
+static void refresh_address(void);
+
+enum { SETUP_OPEN, SETUP_CLOSE, PROFILE_APPLY, NETWORK_TICK };
+enum { CONNECTING, CONNECTED, FAILED, HOTSPOT, SAVE_FAILED };
+ESP_EVENT_DEFINE_BASE(A2_WIFI_EVENT);
+static esp_netif_t *station_netif, *ap_netif;
+static wifi_profile_t profile;
+static portMUX_TYPE state_lock = portMUX_INITIALIZER_UNLOCKED;
+static atomic_bool initialized, setup_active, station_connected, ap_started;
+static atomic_uint connection_state;
+static char station_ip[16], setup_ssid[33], setup_password[13], setup_csrf[33];
+static int64_t connecting_since;
+
+static wifi_profile_t current_profile(void)
+{
+    wifi_profile_t copy;
+    portENTER_CRITICAL(&state_lock);
+    copy=profile;
+    portEXIT_CRITICAL(&state_lock);
+    return copy;
+}
+
+static void random_hex(char *out, size_t digits)
+{
+    static const char alphabet[]="0123456789ABCDEF";
+    uint8_t bytes[16];
+    esp_fill_random(bytes,sizeof(bytes));
+    for (size_t i=0;i<digits;++i) out[i]=alphabet[(bytes[i/2] >> ((i&1) ? 0 : 4))&15];
+    out[digits]=0;
+}
+
+bool network_setup_start(void)
+{
+    return atomic_load(&initialized) &&
+        esp_event_post(A2_WIFI_EVENT,SETUP_OPEN,NULL,0,0)==ESP_OK;
+}
+
+void network_setup_stop(void)
+{
+    if (atomic_load(&initialized))
+        (void)esp_event_post(A2_WIFI_EVENT,SETUP_CLOSE,NULL,0,0);
+}
+
+void network_setup_info(network_setup_info_t *out)
+{
+    memset(out,0,sizeof(*out));
+    portENTER_CRITICAL(&state_lock);
+    snprintf(out->ssid,sizeof(out->ssid),"%s",setup_ssid);
+    snprintf(out->password,sizeof(out->password),"%s",setup_password);
+    char ip[16]; snprintf(ip,sizeof(ip),"%s",device_ip);
+    const bool hotspot=profile.mode==WIFI_PROFILE_HOTSPOT;
+    portEXIT_CRITICAL(&state_lock);
+    strcpy(out->url,"HTTP://192.168.4.1");
+    if (!atomic_load(&initialized)) strcpy(out->status,"WI-FI IS NOT AVAILABLE");
+    else if (!atomic_load(&setup_active)) strcpy(out->status,"STARTING SETUP NETWORK...");
+    else if (atomic_load(&connection_state)==SAVE_FAILED) strcpy(out->status,"SAVE FAILED - PLEASE TRY AGAIN");
+    else if (hotspot) strcpy(out->status,"HOTSPOT MODE - B TO APPLY AND CLOSE");
+    else if (atomic_load(&station_connected)) snprintf(out->status,sizeof(out->status),"CONNECTED: %s",ip);
+    else if (atomic_load(&connection_state)==FAILED) strcpy(out->status,"NOT CONNECTED - CHECK YOUR DETAILS");
+    else strcpy(out->status,"ENTER YOUR DETAILS IN THE BROWSER");
+}
+
+/* The setup form is available only through the protected setup AP, never the
+ * router-facing interface. CSRF additionally prevents blind browser requests. */
+static bool setup_client(httpd_req_t *request)
+{
+    if (!atomic_load(&setup_active)) return false;
+    struct sockaddr_storage local={0}; socklen_t length=sizeof(local);
+    if (getsockname(httpd_req_to_sockfd(request),(struct sockaddr *)&local,&length)) return false;
+    bool setup_address=false;
+    if (local.ss_family==AF_INET && length>=sizeof(struct sockaddr_in)) {
+        const struct sockaddr_in *ipv4=(const struct sockaddr_in *)&local;
+        setup_address=ntohl(ipv4->sin_addr.s_addr)==0xc0a80401u;
+    } else if (local.ss_family==AF_INET6 && length>=sizeof(struct sockaddr_in6)) {
+        /* ESP-IDF's dual-stack HTTP listener reports IPv4 clients as mapped
+         * IPv6 addresses. Accept only the exact setup destination in either form. */
+        const struct sockaddr_in6 *ipv6=(const struct sockaddr_in6 *)&local;
+        const uint8_t mapped[16]={0,0,0,0,0,0,0,0,0,0,255,255,192,168,4,1};
+        setup_address=!memcmp(&ipv6->sin6_addr,mapped,sizeof(mapped));
+    }
+    if (!setup_address) return false;
+    char host[40];
+    if (httpd_req_get_hdr_value_str(request,"Host",host,sizeof(host))!=ESP_OK ||
+        (strcmp(host,"192.168.4.1") && strcmp(host,"192.168.4.1:80"))) return false;
+    if (httpd_req_get_hdr_value_len(request,"Origin")) {
+        char origin[48];
+        if (httpd_req_get_hdr_value_str(request,"Origin",origin,sizeof(origin))!=ESP_OK ||
+            (strcmp(origin,"http://192.168.4.1") && strcmp(origin,"http://192.168.4.1:80"))) return false;
+    }
+    return true;
+}
+
+static esp_err_t setup_error(httpd_req_t *request,const char *status,const char *message)
+{
+    httpd_resp_set_status(request,status);
+    httpd_resp_set_type(request,"text/plain");
+    return httpd_resp_sendstr(request,message);
+}
+
+static esp_err_t handle_setup(httpd_req_t *request)
+{
+    httpd_resp_set_hdr(request,"Cache-Control","no-store");
+    httpd_resp_set_hdr(request,"X-Content-Type-Options","nosniff");
+    httpd_resp_set_hdr(request,"Content-Security-Policy",
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    if (!setup_client(request)) return setup_error(request,"403 Forbidden","Open WI-FI SETUP on the Chromatic and join its displayed network.\n");
+    if (request->method==HTTP_GET && !strcmp(request->uri,"/wifi/status")) {
+        const unsigned state=atomic_load(&connection_state);
+        const char *name=state==CONNECTED ? "connected" : state==HOTSPOT ? "hotspot" :
+                         state==FAILED || state==SAVE_FAILED ? "failed" : "connecting";
+        char ip[16];
+        portENTER_CRITICAL(&state_lock);
+        snprintf(ip,sizeof(ip),"%s",device_ip);
+        portEXIT_CRITICAL(&state_lock);
+        snprintf(response,sizeof(response),"{\"state\":\"%s\",\"ip\":\"%s\"}",name,ip);
+        httpd_resp_set_type(request,"application/json");
+        return httpd_resp_sendstr(request,response);
+    }
+    char nonce[33];
+    portENTER_CRITICAL(&state_lock);
+    memcpy(nonce,setup_csrf,sizeof(nonce));
+    portEXIT_CRITICAL(&state_lock);
+    if (request->method==HTTP_GET) {
+        const wifi_profile_t current=current_profile();
+        if (!wifi_portal_render(response,sizeof(response),current.ssid,nonce,
+                                current.mode==WIFI_PROFILE_HOTSPOT))
+            return setup_error(request,"500 Internal Server Error","Setup page unavailable.\n");
+        httpd_resp_set_type(request,"text/html; charset=utf-8");
+        return httpd_resp_sendstr(request,response);
+    }
+    if (!request->content_len || request->content_len>WIFI_FORM_MAX_BYTES)
+        return setup_error(request,"400 Bad Request","Invalid form size.\n");
+    char type[96];
+    if (httpd_req_get_hdr_value_str(request,"Content-Type",type,sizeof(type))!=ESP_OK ||
+        (strcmp(type,"application/x-www-form-urlencoded") &&
+         strcmp(type,"application/x-www-form-urlencoded;charset=UTF-8")))
+        return setup_error(request,"415 Unsupported Media Type","Use the Wi-Fi setup form.\n");
+    char body[WIFI_FORM_MAX_BYTES]; size_t received=0;
+    while (received<request->content_len) {
+        const int count=httpd_req_recv(request,body+received,request->content_len-received);
+        if (count<=0) {
+            httpd_resp_set_status(request,"408 Request Timeout");
+            (void)httpd_resp_sendstr(request,"Incomplete form. Nothing saved.\n");
+            return ESP_FAIL;
+        }
+        received+=(size_t)count;
+    }
+    wifi_profile_t next;
+    if (!wifi_form_parse(body,received,nonce,&next))
+        return setup_error(request,"400 Bad Request","Check the network name and password, or reload this page.\n");
+    if (wifi_store_save(&next)!=ESP_OK) {
+        atomic_store(&connection_state,SAVE_FAILED);
+        return setup_error(request,"500 Internal Server Error","Saving could not be confirmed. Current connection unchanged; please try again.\n");
+    }
+    if (esp_event_post(A2_WIFI_EVENT,PROFILE_APPLY,&next,sizeof(next),0)!=ESP_OK)
+        return setup_error(request,"503 Service Unavailable","Settings saved. Restart the Chromatic to apply.\n");
+    char accept[80];
+    if (httpd_req_get_hdr_value_str(request,"Accept",accept,sizeof(accept))==ESP_OK &&
+        strstr(accept,"application/json")) {
+        httpd_resp_set_type(request,"application/json");
+        return httpd_resp_sendstr(request,next.mode==WIFI_PROFILE_HOTSPOT ?
+            "{\"ok\":true,\"mode\":\"hotspot\"}" : "{\"ok\":true,\"mode\":\"station\"}");
+    }
+    httpd_resp_set_type(request,"text/html; charset=utf-8");
+    return httpd_resp_sendstr(request,wifi_portal_saved());
+}
+
 static void start_server(void)
 {
     if (server_started) return;
-    httpd_config_t http_config = HTTPD_DEFAULT_CONFIG();
-    http_config.stack_size = 8192;
-    http_config.max_uri_handlers = 4;
-    http_config.max_open_sockets = 3;
-    /* These bound socket inactivity, not the duration of storage calls. Initial
-     * flash allocation/programming can legitimately keep an import busy longer.
-     */
-    http_config.recv_wait_timeout = 30;
-    http_config.send_wait_timeout = 30;
+    httpd_config_t http_config=HTTPD_DEFAULT_CONFIG();
+    http_config.stack_size=8192;
+    http_config.max_uri_handlers=8;
+    http_config.max_open_sockets=3;
+    http_config.recv_wait_timeout=30;
+    http_config.send_wait_timeout=30;
     httpd_handle_t server;
-    ESP_ERROR_CHECK(httpd_start(&server, &http_config));
-    const httpd_uri_t routes[] = {
-        {.uri = "/status", .method = HTTP_GET, .handler = handle},
-        {.uri = "/text", .method = HTTP_GET, .handler = handle},
-        {.uri = "/command", .method = HTTP_POST, .handler = handle},
-        {.uri = "/disk", .method = HTTP_POST, .handler = handle_disk},
+    ESP_ERROR_CHECK(httpd_start(&server,&http_config));
+    const httpd_uri_t routes[]={
+        {.uri="/status",.method=HTTP_GET,.handler=handle},
+        {.uri="/text",.method=HTTP_GET,.handler=handle},
+        {.uri="/command",.method=HTTP_POST,.handler=handle},
+        {.uri="/disk",.method=HTTP_POST,.handler=handle_disk},
+        {.uri="/",.method=HTTP_GET,.handler=handle_setup},
+        {.uri="/wifi",.method=HTTP_GET,.handler=handle_setup},
+        {.uri="/wifi/status",.method=HTTP_GET,.handler=handle_setup},
+        {.uri="/wifi/save",.method=HTTP_POST,.handler=handle_setup},
     };
-    for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); ++i)
-        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &routes[i]));
-    server_started = true;
+    for (size_t i=0;i<sizeof(routes)/sizeof(routes[0]);++i)
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server,&routes[i]));
+    server_started=true;
 }
 
-static void publish_address(const esp_netif_ip_info_t *info)
+static void refresh_address(void)
 {
-    snprintf(device_ip, sizeof(device_ip), IPSTR, IP2STR(&info->ip));
-    start_server();
-    /* SSH may generate its host key only after Wi-Fi has started. AP_START is
-     * the equivalent of station address acquisition for hotspot mode.
-     */
-    atomic_store(&ready, true);
-    printf("CHROMATIC_APPLE2_IP %s\n", device_ip);
+    const bool station=atomic_load(&station_connected),ap=atomic_load(&ap_started);
+    char address[16]="0.0.0.0";
+    if (station) snprintf(address,sizeof(address),"%s",station_ip);
+    else if (ap) strcpy(address,"192.168.4.1");
+    portENTER_CRITICAL(&state_lock);
+    strcpy(device_ip,address);
+    portEXIT_CRITICAL(&state_lock);
+    if (station || ap) start_server();
+    atomic_store(&ready,station || ap);
 }
 
-static void wifi_event(void *unused, esp_event_base_t base, int32_t id, void *data)
+static esp_err_t configure_ap(bool setup)
+{
+    wifi_config_t config={0};
+    const wifi_profile_t current=current_profile();
+    const char *ssid=setup ? setup_ssid : current.ssid;
+    const char *password=setup ? setup_password : current.password;
+    memcpy(config.ap.ssid,ssid,strlen(ssid)); config.ap.ssid_len=strlen(ssid);
+    memcpy(config.ap.password,password,strlen(password));
+    config.ap.channel=1; config.ap.authmode=WIFI_AUTH_WPA2_PSK;
+    config.ap.max_connection=1; config.ap.beacon_interval=100;
+    return esp_wifi_set_config(WIFI_IF_AP,&config);
+}
+
+static esp_err_t configure_station(void)
+{
+    wifi_config_t config={0};
+    const wifi_profile_t current=current_profile();
+    memcpy(config.sta.ssid,current.ssid,strlen(current.ssid));
+    memcpy(config.sta.password,current.password,strlen(current.password));
+    return esp_wifi_set_config(WIFI_IF_STA,&config);
+}
+
+static void open_setup(void)
+{
+    if (atomic_load(&setup_active)) return;
+    char nonce[33]; random_hex(nonce,32);
+    portENTER_CRITICAL(&state_lock);
+    memcpy(setup_csrf,nonce,sizeof(nonce));
+    portEXIT_CRITICAL(&state_lock);
+    atomic_store(&setup_active,true);
+    const wifi_profile_t current=current_profile();
+    const bool try_station=current.mode==WIFI_PROFILE_STATION &&
+                           atomic_load(&connection_state)!=FAILED;
+    ESP_ERROR_CHECK(esp_wifi_set_mode(try_station ? WIFI_MODE_APSTA : WIFI_MODE_AP));
+    ESP_ERROR_CHECK(configure_ap(true));
+}
+
+static void close_setup(void)
+{
+    atomic_store(&setup_active,false);
+    portENTER_CRITICAL(&state_lock);
+    memset(setup_csrf,0,sizeof(setup_csrf));
+    portEXIT_CRITICAL(&state_lock);
+    const wifi_profile_t current=current_profile();
+    if (current.mode==WIFI_PROFILE_HOTSPOT) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        ESP_ERROR_CHECK(configure_ap(false));
+        atomic_store(&connection_state,HOTSPOT);
+    } else {
+        connecting_since=esp_timer_get_time();
+        if (!atomic_load(&station_connected)) atomic_store(&connection_state,CONNECTING);
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(configure_station());
+        if (!atomic_load(&station_connected)) (void)esp_wifi_connect();
+    }
+}
+
+static void wifi_event(void *unused,esp_event_base_t base,int32_t id,void *data)
 {
     (void)unused;
-#if DEVICE_WIFI_AP
-    (void)data;
-    if (base == WIFI_EVENT && id == WIFI_EVENT_AP_START) {
-        esp_netif_ip_info_t info;
-        ESP_ERROR_CHECK(esp_netif_get_ip_info(wifi_netif, &info));
-        publish_address(&info);
-    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STOP) {
-        atomic_store(&ready, false);
-        strcpy(device_ip, "0.0.0.0");
+    if (base==A2_WIFI_EVENT) {
+        if (id==SETUP_OPEN) open_setup();
+        else if (id==SETUP_CLOSE) close_setup();
+        else if (id==PROFILE_APPLY) {
+            const wifi_profile_t next=*(const wifi_profile_t *)data;
+            (void)esp_wifi_disconnect();
+            atomic_store(&station_connected,false);
+            portENTER_CRITICAL(&state_lock);
+            profile=next;
+            portEXIT_CRITICAL(&state_lock);
+            connecting_since=esp_timer_get_time();
+            atomic_store(&connection_state,next.mode==WIFI_PROFILE_HOTSPOT ? HOTSPOT : CONNECTING);
+            if (next.mode==WIFI_PROFILE_STATION) {
+                ESP_ERROR_CHECK(esp_wifi_set_mode(atomic_load(&setup_active) ? WIFI_MODE_APSTA : WIFI_MODE_STA));
+                ESP_ERROR_CHECK(configure_station());
+                (void)esp_wifi_connect();
+            } else if (atomic_load(&setup_active)) {
+                ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+            } else close_setup();
+            refresh_address();
+        } else if (id==NETWORK_TICK && profile.mode==WIFI_PROFILE_STATION &&
+                   !atomic_load(&station_connected) && atomic_load(&connection_state)!=FAILED &&
+                   esp_timer_get_time()-connecting_since>=25000000) {
+            /* Repeated station scans share the AP radio and can prevent a new
+             * client from joining recovery. Keep setup on a stable AP until the
+             * user saves station details or explicitly closes setup to retry. */
+            atomic_store(&connection_state,FAILED);
+            (void)esp_wifi_disconnect();
+            open_setup();
+            ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        }
+        return;
     }
-#else
-    if (base == WIFI_EVENT && (id == WIFI_EVENT_STA_START || id == WIFI_EVENT_STA_DISCONNECTED)) {
-        atomic_store(&ready, false);
-        strcpy(device_ip, "0.0.0.0");
-        (void)esp_wifi_connect();
-    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        const ip_event_got_ip_t *event = data;
-        publish_address(&event->ip_info);
+    if (base==WIFI_EVENT && id==WIFI_EVENT_STA_START) {
+        if (profile.mode==WIFI_PROFILE_STATION && atomic_load(&connection_state)!=FAILED)
+            (void)esp_wifi_connect();
+    } else if (base==WIFI_EVENT && id==WIFI_EVENT_STA_DISCONNECTED) {
+        if (atomic_exchange(&station_connected,false)) connecting_since=esp_timer_get_time();
+        if (profile.mode==WIFI_PROFILE_STATION && atomic_load(&connection_state)!=FAILED) {
+            atomic_store(&connection_state,CONNECTING);
+            (void)esp_wifi_connect();
+        }
+        refresh_address();
+    } else if (base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) {
+        if (profile.mode!=WIFI_PROFILE_STATION || atomic_load(&connection_state)==FAILED) return;
+        const ip_event_got_ip_t *event=data;
+        snprintf(station_ip,sizeof(station_ip),IPSTR,IP2STR(&event->ip_info.ip));
+        atomic_store(&station_connected,true);
+        atomic_store(&connection_state,CONNECTED);
+        refresh_address();
+    } else if (base==WIFI_EVENT && (id==WIFI_EVENT_AP_START || id==WIFI_EVENT_AP_STOP)) {
+        atomic_store(&ap_started,id==WIFI_EVENT_AP_START);
+        refresh_address();
     }
-#endif
+}
+
+static void network_tick(void *unused)
+{
+    (void)unused;
+    (void)esp_event_post(A2_WIFI_EVENT,NETWORK_TICK,NULL,0,0);
 }
 
 void network_start(void)
 {
-    // Keep Wi-Fi config in RAM; do not erase or replace the console's existing NVS.
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-#if DEVICE_WIFI_AP
-    wifi_netif = esp_netif_create_default_wifi_ap();
-#else
-    wifi_netif = esp_netif_create_default_wifi_sta();
-#endif
-    ESP_ERROR_CHECK(wifi_netif ? ESP_OK : ESP_ERR_NO_MEM);
-    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+    station_netif=esp_netif_create_default_wifi_sta();
+    ap_netif=esp_netif_create_default_wifi_ap();
+    ESP_ERROR_CHECK(station_netif && ap_netif ? ESP_OK : ESP_ERR_NO_MEM);
+    profile=(wifi_profile_t){.mode=DEVICE_WIFI_AP ? WIFI_PROFILE_HOTSPOT : WIFI_PROFILE_STATION};
+    snprintf(profile.ssid,sizeof(profile.ssid),"%s",DEVICE_WIFI_SSID);
+    snprintf(profile.password,sizeof(profile.password),"%s",DEVICE_WIFI_PASSWORD);
+    wifi_profile_t saved;
+    const esp_err_t loaded=wifi_store_load(&saved);
+    if (loaded==ESP_OK) profile=saved;
+    else if (loaded!=ESP_ERR_NVS_NOT_FOUND) puts("CHROMATIC_WIFI stored profile unavailable; build defaults retained");
+    wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, NULL));
-#if !DEVICE_WIFI_AP
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event, NULL));
-#endif
-    wifi_config_t config = {0};
-#if DEVICE_WIFI_AP
-    memcpy(config.ap.ssid, DEVICE_WIFI_SSID, strlen(DEVICE_WIFI_SSID));
-    config.ap.ssid_len = strlen(DEVICE_WIFI_SSID);
-    memcpy(config.ap.password, DEVICE_WIFI_PASSWORD, strlen(DEVICE_WIFI_PASSWORD));
-    config.ap.channel = 1;
-    config.ap.authmode = WIFI_AUTH_WPA2_PSK;
-    config.ap.max_connection = 1;
-    config.ap.beacon_interval = 100;
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &config));
-#else
-    memcpy(config.sta.ssid, DEVICE_WIFI_SSID, strlen(DEVICE_WIFI_SSID));
-    memcpy(config.sta.password, DEVICE_WIFI_PASSWORD, strlen(DEVICE_WIFI_PASSWORD));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &config));
-#endif
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT,ESP_EVENT_ANY_ID,wifi_event,NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,wifi_event,NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(A2_WIFI_EVENT,ESP_EVENT_ANY_ID,wifi_event,NULL));
+    atomic_store(&connection_state,profile.mode==WIFI_PROFILE_HOTSPOT ? HOTSPOT : CONNECTING);
+    connecting_since=esp_timer_get_time();
+    uint8_t mac[6]; ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA,mac));
+    snprintf(setup_ssid,sizeof(setup_ssid),"CHROMATIC-%02X%02X%02X",mac[3],mac[4],mac[5]);
+    random_hex(setup_password,12);
+    if (profile.mode==WIFI_PROFILE_HOTSPOT) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+        ESP_ERROR_CHECK(configure_ap(false));
+    } else {
+        /* Preconfigure a protected AP while radio is stopped, so enabling setup
+         * later never briefly advertises the SDK's default open network. */
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+        ESP_ERROR_CHECK(configure_ap(true));
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(configure_station());
+    }
     ESP_ERROR_CHECK(esp_wifi_start());
+    /* RF is now active; generate the displayed key with hardware entropy. The
+     * protected bootstrap AP key is replaced when setup is actually opened. */
+    random_hex(setup_password,12);
+    char stored_key[13];
+    if (wifi_store_setup_key(stored_key,setup_password)==ESP_OK)
+        memcpy(setup_password,stored_key,sizeof(setup_password));
+    else puts("CHROMATIC_WIFI setup key could not be retained; this boot uses a temporary key");
+    const esp_timer_create_args_t timer_args={.callback=network_tick,.name="wifi_recovery"};
+    esp_timer_handle_t timer;
+    ESP_ERROR_CHECK(esp_timer_create(&timer_args,&timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(timer,1000000));
+    atomic_store(&initialized,true);
 }
 
 #else
 void network_start(void) { puts("CHROMATIC_APPLE2_WIFI disabled (no private build config)"); }
+bool network_setup_start(void) { return false; }
+void network_setup_stop(void) {}
+void network_setup_info(network_setup_info_t *out)
+{
+    memset(out,0,sizeof(*out));
+    strcpy(out->status,"WI-FI IS NOT AVAILABLE");
+}
 #endif

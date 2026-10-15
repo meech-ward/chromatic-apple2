@@ -13,9 +13,9 @@ connects the display, buttons, speaker and cartridge.
 - Cartridge-backed floppy images with persistent `SAVE`/`LOAD` changes.
 - A handheld program browser, on-screen keyboard and pause/resume menu.
 - An encrypted SSH terminal for typing from a computer.
-- Existing Wi-Fi or a WPA2 hotspot for local access.
-- Approximately 1.023 MHz emulated CPU speed and about 7 changing display frames
-  per second on the tested device. Disk service can pause emulation.
+- Wi-Fi setup from a phone or computer, with existing-network and WPA2 hotspot modes.
+- Approximately 1.023 MHz emulated CPU speed and partial display updates; see
+  [measured performance](docs/verification.md). Disk service can pause emulation.
 
 This is a working hardware project with a narrow tested target: one OpenAI DevDay
 Chromatic containing an ESP32-U4WDH and GW5A-EV25UG256CC1/I0 FPGA, with a 4 MiB

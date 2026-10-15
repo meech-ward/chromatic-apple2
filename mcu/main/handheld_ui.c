@@ -8,7 +8,8 @@ enum { DEBOUNCE_MS = 20, REPEAT_DELAY_MS = 350, REPEAT_MS = 100,
 static const char character_keys[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;()+-*/=<>\"'$?^";
 enum { CHARACTER_COUNT = sizeof(character_keys) - 1, KEY_COUNT = CHARACTER_COUNT + 3 };
 static const char *const menu_items[] = {
-    "PROGRAMS", "RESUME", "KEYBOARD", "SAVE BASIC", "LOAD BASIC", "RESTART", "DEVICE INFO"
+    "PROGRAMS", "RESUME", "KEYBOARD", "SAVE BASIC", "LOAD BASIC", "RESTART", "DEVICE INFO",
+    "WI-FI SETUP"
 };
 enum { MENU_COUNT = sizeof(menu_items) / sizeof(menu_items[0]) };
 
@@ -17,7 +18,7 @@ bool handheld_ui_visible(const handheld_ui_t *ui) { return ui->mode != HANDHELD_
 bool handheld_ui_pauses_emulation(const handheld_ui_t *ui)
 {
     return ui->mode == HANDHELD_UI_MENU || ui->mode == HANDHELD_UI_PROGRAMS ||
-           ui->mode == HANDHELD_UI_INFO;
+           ui->mode == HANDHELD_UI_INFO || ui->mode == HANDHELD_UI_WIFI_SETUP;
 }
 
 bool handheld_ui_press(handheld_ui_t *ui, uint16_t button)
@@ -125,8 +126,9 @@ handheld_ui_event_t handheld_ui_update(handheld_ui_t *ui, uint16_t buttons, uint
     edges &= ~ui->blocked_buttons;
     if (edges & HANDHELD_BTN_MENU) {
         if (handheld_ui_visible(ui)) {
+            event.action = ui->mode == HANDHELD_UI_WIFI_SETUP ?
+                HANDHELD_ACTION_STOP_WIFI_SETUP : HANDHELD_ACTION_RESUME;
             mode(ui, HANDHELD_UI_HIDDEN);
-            event.action = HANDHELD_ACTION_RESUME;
         } else {
             ui->menu_selection = 0;
             mode(ui, HANDHELD_UI_MENU);
@@ -142,6 +144,8 @@ handheld_ui_event_t handheld_ui_update(handheld_ui_t *ui, uint16_t buttons, uint
         return event;
     }
     if (!hidden && (edges & HANDHELD_BTN_B)) {
+        if (ui->mode == HANDHELD_UI_WIFI_SETUP)
+            event.action = HANDHELD_ACTION_STOP_WIFI_SETUP;
         if (ui->mode == HANDHELD_UI_MENU) {
             mode(ui, HANDHELD_UI_HIDDEN);
             event.action = HANDHELD_ACTION_RESUME;
@@ -176,6 +180,10 @@ handheld_ui_event_t handheld_ui_update(handheld_ui_t *ui, uint16_t buttons, uint
             case 4: event.action = HANDHELD_ACTION_LOAD_BASIC; mode(ui, HANDHELD_UI_HIDDEN); break;
             case 5: event.action = HANDHELD_ACTION_RESTART; mode(ui, HANDHELD_UI_HIDDEN); break;
             case 6: mode(ui, HANDHELD_UI_INFO); break;
+            case 7:
+                mode(ui, HANDHELD_UI_WIFI_SETUP);
+                event.action = HANDHELD_ACTION_START_WIFI_SETUP;
+                break;
             default: break;
             }
             event.changed = true;
@@ -293,6 +301,21 @@ void handheld_ui_render(const handheld_ui_t *ui, const handheld_ui_info_t *info,
         }
         text(page, 18, 1, "SP SPACE  BS DELETE  CR RETURN", false);
         text(page, 20, 1, "A TYPE     B MENU", false);
+    } else if (ui->mode == HANDHELD_UI_WIFI_SETUP) {
+        line(page, 0, "WI-FI SETUP", true);
+        line(page, 2, "1 JOIN THIS WI-FI NETWORK", false);
+        line(page, 4, info && info->wifi_setup_ssid ? info->wifi_setup_ssid :
+                                                   "STARTING...", false);
+        line(page, 6, "PASSWORD:", false);
+        line(page, 7, info && info->wifi_setup_password ? info->wifi_setup_password :
+                                                       "PLEASE WAIT", false);
+        line(page, 9, "2 OPEN IN YOUR PHONE BROWSER", false);
+        line(page, 11, info && info->wifi_setup_url ? info->wifi_setup_url :
+                                                   "HTTP://192.168.4.1", false);
+        line(page, 13, "3 CHOOSE WI-FI AND SAVE", false);
+        line(page, 16, info && info->wifi_setup_status ? info->wifi_setup_status :
+                    "EXISTING SETTINGS KEPT UNTIL SAVE", false);
+        text(page, 20, 1, "B CLOSE SETUP AND RETURN TO MENU", false);
     } else {
         line(page, 0, "DEVICE INFO", true);
         snprintf(buffer, sizeof(buffer), "IP: %s", info && info->ip ? info->ip : "NOT CONNECTED");
@@ -305,6 +328,7 @@ void handheld_ui_render(const handheld_ui_t *ui, const handheld_ui_info_t *info,
         line(page, 15, info && info->disk_state ? info->disk_state : "UNKNOWN", false);
         text(page, 20, 1, "B MENU", false);
     }
-    if (info && info->status) line(page, 21, info->status, false);
+    if (ui->mode != HANDHELD_UI_WIFI_SETUP && info && info->status)
+        line(page, 21, info->status, false);
     text(page, 23, 1, "MENU RESUME", false);
 }

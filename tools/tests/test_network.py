@@ -18,8 +18,15 @@ class NetworkModes(unittest.TestCase):
         self.assertTrue(compiler and shutil.which(compiler[0]), 'A C compiler is required')
         with tempfile.TemporaryDirectory(prefix='chromatic-network-test-') as temporary:
             work = Path(temporary)
-            for name in ('esp_event.h', 'esp_http_server.h', 'esp_netif.h', 'esp_wifi.h', 'nvs_flash.h'):
+            for name in ('esp_err.h', 'esp_event.h', 'esp_http_server.h', 'esp_netif.h', 'esp_wifi.h',
+                         'nvs_flash.h', 'esp_timer.h', 'esp_random.h'):
                 (work / name).write_text('#include "network_sdk.h"\n')
+            (work / 'freertos').mkdir()
+            for name in ('FreeRTOS.h', 'portmacro.h', 'task.h'):
+                (work / 'freertos' / name).write_text('#include \"network_sdk.h\"\n')
+            (work / 'lwip').mkdir()
+            (work / 'lwip/sockets.h').write_text(
+                '#include <sys/socket.h>\n#include <arpa/inet.h>\n#include <netinet/in.h>\n')
             (work / 'private_config.h').write_text(
                 '#define DEVICE_WIFI_SSID "unit-test-network"\n'
                 '#define DEVICE_WIFI_PASSWORD "unit-test-password"\n'
@@ -31,12 +38,18 @@ class NetworkModes(unittest.TestCase):
                                '-I' + str(work), '-I' + str(ROOT / 'mcu/tests/network_stubs'),
                                '-I' + str(ROOT / 'mcu/main'),
                                f'-DDEVICE_WIFI_ENABLED={enabled}', f'-DDEVICE_WIFI_AP={access_point}',
-                               str(ROOT / 'mcu/tests/network_test.c'), '-o', str(binary)]
+                               str(ROOT / 'mcu/tests/network_test.c'),
+                               str(ROOT / 'mcu/main/wifi_settings.c'),
+                               str(ROOT / 'mcu/main/wifi_portal.c'), '-o', str(binary)]
                     result = subprocess.run(command, capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn('PASS actual networking', result.stdout)
+                    scenarios = ('defaults',) if not enabled else (
+                        'defaults', 'stored-station', 'stored-hotspot', 'load-failed')
+                    for scenario in scenarios:
+                        with self.subTest(scenario=scenario):
+                            result = subprocess.run([str(binary), scenario], capture_output=True, text=True, timeout=10)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            self.assertIn('PASS actual networking', result.stdout)
 
 
 if __name__ == '__main__':

@@ -5,8 +5,9 @@ Hardware was an OpenAI DevDay Chromatic with ESP32-U4WDH,
 GW5A-EV25UG256CC1/I0, the matched LCD and a 4 MiB ISSI IS29GL032 cartridge.
 Testing used externally supplied Apple IIe/slot ROMs and DOS-order disk images;
 those inputs and provisioned binaries are private.
-The hotspot test used one Mac client with the Chromatic at `192.168.4.1`; joining a phone hotspot
-and other Wi-Fi clients were not part of this physical test.
+Runtime Wi-Fi setup was tested on 2026-10-15 with one Mac client and the
+Chromatic at `192.168.4.1`, including the browser form. Phone browsers, joining a
+phone hotspot and other Wi-Fi clients were not physically tested.
 
 | Evidence | Verified behavior |
 | --- | --- |
@@ -15,8 +16,9 @@ and other Wi-Fi clients were not part of this physical test.
 | Display hardware | Sustained moving-pixel BASIC animation at 35.4 screen updates/s; recovery redraws continued under CPU load; zero display-driver errors |
 | Native Mac SSH client | Encrypted login, text display and MENU/PROGRAMS navigation |
 | Hotspot hardware | Mac DHCP lease over direct WPA2 Wi-Fi; authenticated HTTP/SSH; rejected API tokens and SSH passwords; BASIC arithmetic, SAVE/LOAD/RUN and temporary-file cleanup; unchanged Breakout source and catalog; SSH and Wi-Fi reconnection with the same host identity |
+| Runtime Wi-Fi hardware | Menu setup and Mac DHCP; saved station/hotspot profiles across restart; unreachable-network recovery with the same setup password; hotspot SSH arithmetic returning 42; unchanged cartridge disk hash and SSH identity |
 | Audio hardware diagnostics | Codec configuration readbacks, running clocks, silence baseline and nonzero digital data from BASIC bell; audible speaker output not confirmed by listening |
-| Host tests | CPU and real-ROM/DOS regressions, graphics layouts, UI/input timing, resampling, transport parsing, storage persistence/recovery, import boundaries and SSH framing/authentication |
+| Host tests | CPU and real-ROM/DOS regressions, graphics layouts, UI/input timing, resampling, transport parsing, storage persistence/recovery, Wi-Fi form/profile validation and NVS failure recovery, import boundaries and SSH framing/authentication |
 | FPGA simulation | UART framing, cartridge bus sequencing/write gates, removal aborts, display/SPI timing, retained MENU events, codec initialization and I2S transport |
 
 Steady CPU operation targets approximately 1.023 MHz. Display updates use

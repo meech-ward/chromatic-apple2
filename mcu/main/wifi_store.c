@@ -1,0 +1,118 @@
+/* SPDX-License-Identifier: MIT */
+#include "wifi_store.h"
+#include "nvs.h"
+#include <string.h>
+
+#define WIFI_NAMESPACE "a2_wifi"
+#define WIFI_KEY "profile"
+
+static esp_err_t load_blob(uint8_t blob[WIFI_PROFILE_BLOB_BYTES])
+{
+    nvs_handle_t handle;
+    esp_err_t error = nvs_open(WIFI_NAMESPACE, NVS_READONLY, &handle);
+    if (error != ESP_OK) return error;
+    size_t length = WIFI_PROFILE_BLOB_BYTES;
+    error = nvs_get_blob(handle, WIFI_KEY, blob, &length);
+    nvs_close(handle);
+    if (error == ESP_OK && length != WIFI_PROFILE_BLOB_BYTES)
+        error = ESP_ERR_INVALID_SIZE;
+    return error;
+}
+
+esp_err_t wifi_store_load(wifi_profile_t *profile)
+{
+    if (!profile) return ESP_ERR_INVALID_ARG;
+    uint8_t blob[WIFI_PROFILE_BLOB_BYTES];
+    const esp_err_t error = load_blob(blob);
+    if (error != ESP_OK) return error;
+    return wifi_profile_decode(blob, sizeof(blob), profile) ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+}
+
+static esp_err_t write_blob(const uint8_t *blob)
+{
+    nvs_handle_t handle;
+    esp_err_t error = nvs_open(WIFI_NAMESPACE, NVS_READWRITE, &handle);
+    if (error != ESP_OK) return error;
+    error = blob ? nvs_set_blob(handle, WIFI_KEY, blob, WIFI_PROFILE_BLOB_BYTES) :
+                   nvs_erase_key(handle, WIFI_KEY);
+    if (!blob && error == ESP_ERR_NVS_NOT_FOUND) error = ESP_OK;
+    if (error == ESP_OK) error = nvs_commit(handle);
+    nvs_close(handle);
+    return error;
+}
+
+static bool matches_blob(const uint8_t *expected)
+{
+    uint8_t actual[WIFI_PROFILE_BLOB_BYTES];
+    const esp_err_t error = load_blob(actual);
+    return expected ? error == ESP_OK && !memcmp(actual, expected, sizeof(actual)) :
+                      error == ESP_ERR_NVS_NOT_FOUND;
+}
+
+esp_err_t wifi_store_save(const wifi_profile_t *profile)
+{
+    uint8_t next[WIFI_PROFILE_BLOB_BYTES], previous[WIFI_PROFILE_BLOB_BYTES];
+    if (!wifi_profile_encode(profile, next)) return ESP_ERR_INVALID_ARG;
+    esp_err_t error = load_blob(previous);
+    const bool had_previous = error == ESP_OK;
+    if (!had_previous && error != ESP_ERR_NVS_NOT_FOUND) return error;
+    if (had_previous && !memcmp(previous, next, sizeof(next))) return ESP_OK;
+    error = write_blob(next);
+    if (error == ESP_OK && matches_blob(next)) return ESP_OK;
+    if (error == ESP_OK) error = ESP_ERR_INVALID_RESPONSE;
+    const uint8_t *restore = had_previous ? previous : NULL;
+    /* A failed commit may still have taken effect. Verify restoration even when
+     * the compensating write reports an error, rather than assuming either one.
+     */
+    (void)write_blob(restore);
+    return matches_blob(restore) ? error : ESP_ERR_INVALID_STATE;
+}
+
+#define WIFI_SETUP_KEY "setup_key"
+
+static bool setup_key_valid(const char key[13])
+{
+    if (!key) return false;
+    for (size_t i = 0; i < 12; ++i)
+        if (!((key[i] >= '0' && key[i] <= '9') ||
+              (key[i] >= 'A' && key[i] <= 'F'))) return false;
+    return key[12] == 0;
+}
+
+static esp_err_t load_setup_key(char key[13])
+{
+    nvs_handle_t handle;
+    esp_err_t error = nvs_open(WIFI_NAMESPACE, NVS_READONLY, &handle);
+    if (error != ESP_OK) return error;
+    size_t length = 13;
+    error = nvs_get_blob(handle, WIFI_SETUP_KEY, key, &length);
+    nvs_close(handle);
+    if (error == ESP_OK && (length != 13 || !setup_key_valid(key)))
+        error = ESP_ERR_INVALID_RESPONSE;
+    return error;
+}
+
+esp_err_t wifi_store_setup_key(char output[13], const char candidate[13])
+{
+    if (!output) return ESP_ERR_INVALID_ARG;
+    char saved[13];
+    esp_err_t error = load_setup_key(saved);
+    if (error == ESP_OK) {
+        memcpy(output, saved, sizeof(saved));
+        return ESP_OK;
+    }
+    if (error != ESP_ERR_NVS_NOT_FOUND) return error;
+    if (!setup_key_valid(candidate)) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    error = nvs_open(WIFI_NAMESPACE, NVS_READWRITE, &handle);
+    if (error != ESP_OK) return error;
+    error = nvs_set_blob(handle, WIFI_SETUP_KEY, candidate, sizeof(saved));
+    if (error == ESP_OK) error = nvs_commit(handle);
+    nvs_close(handle);
+    if (error != ESP_OK) return error;
+    error = load_setup_key(saved);
+    if (error != ESP_OK) return error;
+    if (memcmp(saved, candidate, sizeof(saved))) return ESP_ERR_INVALID_RESPONSE;
+    memcpy(output, saved, sizeof(saved));
+    return ESP_OK;
+}

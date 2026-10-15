@@ -31,7 +31,8 @@ idf.py -C mcu -DFPGA_UART_BAUD=921600 build
 ```
 
 For BASIC, DOS, HTTP control and SSH, prepare private inputs.
-[Wi-Fi setup](wifi.md) explains network choices, credentials and connecting.
+[Wi-Fi setup](wifi.md) explains initial credentials and changing networks after
+installation without rebuilding.
 
 ```sh
 python3 tools/configure.py
@@ -40,7 +41,9 @@ mkdir -p build/private
 
 The configuration tool prompts for Wi-Fi and SSH settings, generates a random API
 token, and writes `build/device-local.json` with mode `0600`. A generated SSH
-password is stored in that file. The inert
+password is stored in that file. These Wi-Fi settings are first-boot defaults;
+a profile saved through **MENU → WI-FI SETUP** takes precedence on later starts.
+SSH/API credentials remain build settings. The inert
 [example configuration](../examples/device-local.example.json) documents its
 fields; replace its placeholders if creating a file manually.
 
@@ -64,6 +67,8 @@ ROMs and credentials: keep provisioned binaries private.
 CMake caches these input paths. To return to the public diagnostic, explicitly
 clear `ROM_INPUT`, `DISK_ROM_INPUT` and `PRIVATE_CONFIG` or use a fresh build folder.
 Output is `mcu/build/chromatic_apple2.bin`. Building does not program hardware.
+When reusing an older SDK configuration, set `CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048`
+to allow normal phone/browser request headers for Wi-Fi setup.
 
 ## FPGA controller
 
