@@ -70,39 +70,43 @@ esp_err_t wifi_store_save(const wifi_profile_t *profile)
 
 #define WIFI_SETUP_KEY "setup_key"
 
-static bool setup_key_valid(const char key[13])
+static bool legacy_setup_key_valid(const char *key)
 {
-    if (!key) return false;
     for (size_t i = 0; i < 12; ++i)
         if (!((key[i] >= '0' && key[i] <= '9') ||
               (key[i] >= 'A' && key[i] <= 'F'))) return false;
     return key[12] == 0;
 }
 
-static esp_err_t load_setup_key(char key[13])
+static esp_err_t load_setup_key(char key[WIFI_SETUP_PASSWORD_BYTES], bool *legacy)
 {
     nvs_handle_t handle;
     esp_err_t error = nvs_open(WIFI_NAMESPACE, NVS_READONLY, &handle);
     if (error != ESP_OK) return error;
-    size_t length = 13;
+    size_t length = WIFI_SETUP_PASSWORD_BYTES;
     error = nvs_get_blob(handle, WIFI_SETUP_KEY, key, &length);
     nvs_close(handle);
-    if (error == ESP_OK && (length != 13 || !setup_key_valid(key)))
-        error = ESP_ERR_INVALID_RESPONSE;
-    return error;
+    if (error != ESP_OK) return error;
+    *legacy = length == 13 && legacy_setup_key_valid(key);
+    if (!*legacy && (length != WIFI_SETUP_PASSWORD_BYTES ||
+                     !wifi_setup_password_valid(key)))
+        return ESP_ERR_INVALID_RESPONSE;
+    return ESP_OK;
 }
 
-esp_err_t wifi_store_setup_key(char output[13], const char candidate[13])
+esp_err_t wifi_store_setup_key(char output[WIFI_SETUP_PASSWORD_BYTES],
+                               const char candidate[WIFI_SETUP_PASSWORD_BYTES])
 {
     if (!output) return ESP_ERR_INVALID_ARG;
-    char saved[13];
-    esp_err_t error = load_setup_key(saved);
-    if (error == ESP_OK) {
+    char saved[WIFI_SETUP_PASSWORD_BYTES];
+    bool legacy = false;
+    esp_err_t error = load_setup_key(saved, &legacy);
+    if (error == ESP_OK && !legacy) {
         memcpy(output, saved, sizeof(saved));
         return ESP_OK;
     }
-    if (error != ESP_ERR_NVS_NOT_FOUND) return error;
-    if (!setup_key_valid(candidate)) return ESP_ERR_INVALID_ARG;
+    if (error != ESP_OK && error != ESP_ERR_NVS_NOT_FOUND) return error;
+    if (!wifi_setup_password_valid(candidate)) return ESP_ERR_INVALID_ARG;
     nvs_handle_t handle;
     error = nvs_open(WIFI_NAMESPACE, NVS_READWRITE, &handle);
     if (error != ESP_OK) return error;
@@ -110,9 +114,9 @@ esp_err_t wifi_store_setup_key(char output[13], const char candidate[13])
     if (error == ESP_OK) error = nvs_commit(handle);
     nvs_close(handle);
     if (error != ESP_OK) return error;
-    error = load_setup_key(saved);
+    error = load_setup_key(saved, &legacy);
     if (error != ESP_OK) return error;
-    if (memcmp(saved, candidate, sizeof(saved))) return ESP_ERR_INVALID_RESPONSE;
+    if (legacy || memcmp(saved, candidate, sizeof(saved))) return ESP_ERR_INVALID_RESPONSE;
     memcpy(output, saved, sizeof(saved));
     return ESP_OK;
 }

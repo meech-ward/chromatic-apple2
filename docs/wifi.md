@@ -8,7 +8,9 @@ Chromatic and survive power-off; no rebuild or reinstall is needed.
 1. Open the Chromatic's MENU and choose **WI-FI SETUP**.
 2. On your phone or computer, join **CHROMATIC-XXXXXX**, using the setup password
    shown on the handheld. Stay connected when warned that there is no internet.
-   The setup password is saved on the device, so your phone can remember it.
+   The setup password has two uppercase words and four digits, such as
+   `MINT-LAKE-4826`. Each device generates its own and saves it across restarts.
+   Type it exactly as shown, including the hyphens. Your phone can remember it.
 3. Open **http://192.168.4.1** in a browser.
 4. Choose **Join an existing Wi-Fi network** or **Create a Chromatic hotspot**,
    enter the network name and password, then select **Save Wi-Fi settings**.
@@ -21,7 +23,9 @@ regular network, and use the displayed address for SSH.
 For a Chromatic hotspot, the settings take effect when you close setup with
 **B** or **MENU**, or restart the device. Join the network you just saved; the
 Chromatic's address is **192.168.4.1**. No router is needed. This hotspot provides
-local access to the Chromatic, not an internet connection.
+local access to the Chromatic, not an internet connection. The selected mode is
+saved, so hotspot mode starts automatically after power-on and needs no home
+network.
 
 Existing networks must provide 2.4 GHz WPA2-Personal Wi-Fi. New passwords must
 contain 8–63 printable ASCII characters; station mode also accepts a 64-digit
@@ -37,6 +41,10 @@ then follow the steps above. Check the exact network name and password before
 saving again. Connection attempts pause during recovery so the setup network stays
 available. Saving new details or closing setup starts another attempt. You do not
 need a factory reset or a firmware rebuild.
+
+Updating from the older 12-digit setup password replaces it once with the new
+word format. Rejoin using the password shown on the handheld; your saved home
+network or chosen hotspot password stays the same.
 
 Opening setup while using a Chromatic hotspot temporarily replaces that hotspot
 with the setup network. Your saved settings remain intact until you select

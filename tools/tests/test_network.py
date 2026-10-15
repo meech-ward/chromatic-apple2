@@ -40,6 +40,7 @@ class NetworkModes(unittest.TestCase):
                                f'-DDEVICE_WIFI_ENABLED={enabled}', f'-DDEVICE_WIFI_AP={access_point}',
                                str(ROOT / 'mcu/tests/network_test.c'),
                                str(ROOT / 'mcu/main/wifi_settings.c'),
+                               str(ROOT / 'mcu/main/wifi_setup_password.c'),
                                str(ROOT / 'mcu/main/wifi_portal.c'), '-o', str(binary)]
                     result = subprocess.run(command, capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stderr)

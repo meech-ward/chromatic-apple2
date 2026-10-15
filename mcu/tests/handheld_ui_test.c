@@ -258,14 +258,14 @@ static void wifi_setup(void)
     decode_row(guarded.page, 11, row); assert(strstr(row, "HTTP://192.168.4.1"));
     decode_row(guarded.page, 16, row); assert(strstr(row, "KEPT UNTIL SAVE"));
     handheld_ui_info_t info = {
-        .wifi_setup_ssid = "CHROMATIC-123ABC", .wifi_setup_password = "1A2B3C4D5E6F",
+        .wifi_setup_ssid = "CHROMATIC-123ABC", .wifi_setup_password = "MINT-LAKE-4826",
         .wifi_setup_url = "http://192.168.4.1", .wifi_setup_status = "READY FOR SETUP",
         .status = "UNRELATED BASIC STATUS"
     };
     handheld_ui_render(&ui, &info, guarded.page);
     decode_row(guarded.page, 2, row); assert(strstr(row, "JOIN THIS WI-FI NETWORK"));
     decode_row(guarded.page, 4, row); assert(strstr(row, "CHROMATIC-123ABC"));
-    decode_row(guarded.page, 7, row); assert(strstr(row, "1A2B3C4D5E6F"));
+    decode_row(guarded.page, 7, row); assert(strstr(row, "MINT-LAKE-4826"));
     decode_row(guarded.page, 9, row); assert(strstr(row, "PHONE BROWSER"));
     decode_row(guarded.page, 13, row); assert(strstr(row, "CHOOSE WI-FI AND SAVE"));
     decode_row(guarded.page, 16, row); assert(strstr(row, "READY FOR SETUP"));

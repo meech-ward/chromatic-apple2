@@ -192,7 +192,7 @@ static wifi_profile_t profile;
 static portMUX_TYPE state_lock = portMUX_INITIALIZER_UNLOCKED;
 static atomic_bool initialized, setup_active, station_connected, ap_started;
 static atomic_uint connection_state;
-static char station_ip[16], setup_ssid[33], setup_password[13], setup_csrf[33];
+static char station_ip[16], setup_ssid[33], setup_password[WIFI_SETUP_PASSWORD_BYTES], setup_csrf[33];
 static int64_t connecting_since;
 
 static wifi_profile_t current_profile(void)
@@ -211,6 +211,14 @@ static void random_hex(char *out, size_t digits)
     esp_fill_random(bytes,sizeof(bytes));
     for (size_t i=0;i<digits;++i) out[i]=alphabet[(bytes[i/2] >> ((i&1) ? 0 : 4))&15];
     out[digits]=0;
+}
+
+static void random_setup_password(void)
+{
+    uint8_t entropy[WIFI_SETUP_PASSWORD_ENTROPY_BYTES];
+    do {
+        esp_fill_random(entropy,sizeof(entropy));
+    } while (!wifi_setup_password_generate(setup_password,entropy));
 }
 
 bool network_setup_start(void)
@@ -535,7 +543,7 @@ void network_start(void)
     connecting_since=esp_timer_get_time();
     uint8_t mac[6]; ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA,mac));
     snprintf(setup_ssid,sizeof(setup_ssid),"CHROMATIC-%02X%02X%02X",mac[3],mac[4],mac[5]);
-    random_hex(setup_password,12);
+    random_setup_password();
     if (profile.mode==WIFI_PROFILE_HOTSPOT) {
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
         ESP_ERROR_CHECK(configure_ap(false));
@@ -550,8 +558,8 @@ void network_start(void)
     ESP_ERROR_CHECK(esp_wifi_start());
     /* RF is now active; generate the displayed key with hardware entropy. The
      * protected bootstrap AP key is replaced when setup is actually opened. */
-    random_hex(setup_password,12);
-    char stored_key[13];
+    random_setup_password();
+    char stored_key[WIFI_SETUP_PASSWORD_BYTES];
     if (wifi_store_setup_key(stored_key,setup_password)==ESP_OK)
         memcpy(setup_password,stored_key,sizeof(setup_password));
     else puts("CHROMATIC_WIFI setup key could not be retained; this boot uses a temporary key");

@@ -17,6 +17,7 @@ phone hotspot and other Wi-Fi clients were not physically tested.
 | Native Mac SSH client | Encrypted login, text display and MENU/PROGRAMS navigation |
 | Hotspot hardware | Mac DHCP lease over direct WPA2 Wi-Fi; authenticated HTTP/SSH; rejected API tokens and SSH passwords; BASIC arithmetic, SAVE/LOAD/RUN and temporary-file cleanup; unchanged Breakout source and catalog; SSH and Wi-Fi reconnection with the same host identity |
 | Runtime Wi-Fi hardware | Menu setup and Mac DHCP; saved station/hotspot profiles across restart; unreachable-network recovery with the same setup password; hotspot SSH arithmetic returning 42; unchanged cartridge disk hash and SSH identity |
+| Readable setup password hardware | Legacy password migrated to two uppercase words and four digits; actual WPA2 setup-network join and browser form; same password after restart; authenticated SSH navigation, unchanged home profile and cartridge disk hash |
 | Audio hardware diagnostics | Codec configuration readbacks, running clocks, silence baseline and nonzero digital data from BASIC bell; audible speaker output not confirmed by listening |
 | Host tests | CPU and real-ROM/DOS regressions, graphics layouts, UI/input timing, resampling, transport parsing, storage persistence/recovery, Wi-Fi form/profile validation and NVS failure recovery, import boundaries and SSH framing/authentication |
 | FPGA simulation | UART framing, cartridge bus sequencing/write gates, removal aborts, display/SPI timing, retained MENU events, codec initialization and I2S transport |

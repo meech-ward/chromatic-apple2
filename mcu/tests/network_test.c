@@ -41,8 +41,8 @@ esp_err_t wifi_store_save(const wifi_profile_t *profile) {
     if(save_error!=ESP_OK)return save_error;
     stored_profile=*profile;no_store=false;return ESP_OK;
 }
-esp_err_t wifi_store_setup_key(char output[13],const char candidate[13]) {
-    memcpy(output,candidate,13);return ESP_OK;
+esp_err_t wifi_store_setup_key(char output[WIFI_SETUP_PASSWORD_BYTES],const char candidate[WIFI_SETUP_PASSWORD_BYTES]) {
+    memcpy(output,candidate,WIFI_SETUP_PASSWORD_BYTES);return ESP_OK;
 }
 esp_err_t esp_netif_init(void) { return ESP_OK; }
 esp_err_t esp_event_loop_create_default(void) { return ESP_OK; }
@@ -195,12 +195,11 @@ static void check_protected_setup(void)
     assert(ap_config.ap.channel==1 && ap_config.ap.beacon_interval==100);
     assert(!strcmp((const char *)ap_config.ap.ssid,"CHROMATIC-ABCDEF"));
     assert(ap_config.ap.ssid_len==16);
-    assert(strlen((const char *)ap_config.ap.password)==12);
-    for(unsigned i=0;i<12;i++)assert(strchr("0123456789ABCDEF",ap_config.ap.password[i]));
+    assert(wifi_setup_password_valid((const char *)ap_config.ap.password));
     deliver(WIFI_EVENT,WIFI_EVENT_AP_START,NULL);
     assert(network_ready());
     network_setup_info_t info;network_setup_info(&info);
-    assert(!strcmp(info.ssid,"CHROMATIC-ABCDEF") && strlen(info.password)==12);
+    assert(!strcmp(info.ssid,"CHROMATIC-ABCDEF") && wifi_setup_password_valid(info.password));
     assert(!strcmp(info.url,"HTTP://192.168.4.1"));
     char nonce[33];read_nonce(nonce);
     httpd_req_t request=setup_request(HTTP_GET,"/",NULL);

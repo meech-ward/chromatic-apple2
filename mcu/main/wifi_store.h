@@ -2,6 +2,7 @@
 #pragma once
 #include "esp_err.h"
 #include "wifi_settings.h"
+#include "wifi_setup_password.h"
 
 /* Call after nvs_flash_init(). No NVS partition is erased or reinitialized.
  * NOT_FOUND means compiled defaults remain active. Other load errors leave the
@@ -15,9 +16,10 @@ esp_err_t wifi_store_load(wifi_profile_t *profile);
  */
 esp_err_t wifi_store_save(const wifi_profile_t *profile);
 
-/* Reuse the private setup AP key across restarts so phones remember its network.
- * Existing values must be exactly 12 uppercase hexadecimal digits. Only when
- * absent is candidate validated, committed, then checked through a fresh handle.
+/* Reuse the private setup AP password across restarts so phones remember it.
+ * A valid legacy 12-digit hexadecimal key is migrated once to candidate's word
+ * password. Missing keys also use candidate; existing word passwords are kept.
  * No profile/SSH keys are changed; output remains untouched on any failure.
  */
-esp_err_t wifi_store_setup_key(char output[13], const char candidate[13]);
+esp_err_t wifi_store_setup_key(char output[WIFI_SETUP_PASSWORD_BYTES],
+                               const char candidate[WIFI_SETUP_PASSWORD_BYTES]);
