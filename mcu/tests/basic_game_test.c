@@ -152,8 +152,8 @@ static void seed_ball_pixel(unsigned x,unsigned y)
         const unsigned address=base+((row&7)<<7)+(row>>3)*40;
         for (unsigned col=0;col<40;++col) {
             uint8_t *pixel=machine.ram+address+col;
-            if ((*pixel&15)==15) *pixel&=0xf0;
-            if ((*pixel>>4)==15) *pixel&=0x0f;
+            if ((*pixel&15)==15) *pixel=(*pixel&0xf0)|1;
+            if ((*pixel>>4)==15) *pixel=(*pixel&0x0f)|0x10;
         }
     }
     const unsigned row=y/2;
@@ -161,47 +161,57 @@ static void seed_ball_pixel(unsigned x,unsigned y)
     machine.ram[address]|=(uint8_t)(15<<((y&1)*4));
     check(ball_pixels()==1,"deterministic missed-paddle ball seeded");
 }
+static unsigned pixel(unsigned x,unsigned y)
+{
+    const unsigned row=y/2;
+    return (machine.ram[0x400+((row&7)<<7)+(row>>3)*40+x]>>((y&1)*4))&15;
+}
+static void frame(const char *name)
+{
+    const char *directory=getenv("A2_GAME_FRAMES_DIR");
+    if (!directory) return;
+    char path[1024];
+    check(snprintf(path,sizeof(path),"%s/%s.ram",directory,name)<(int)sizeof(path),"frame path fits");
+    FILE *output=fopen(path,"wb");
+    check(output && fwrite(machine.ram,1,sizeof(machine.ram),output)==sizeof(machine.ram),"frame captured");
+    check(!fclose(output),"frame closed");
+}
 static void position_paddle(unsigned expected)
 {
-    at_game_loop();
-    double current=value("P");
-    if (expected!=1 && expected!=33 && (((unsigned)current^expected)&1)) {
-        machine.buttons=64;await_value("P",1);current=1;
+    at_game_loop();double current=value("P");
+    if (expected!=0 && expected!=34 && (((unsigned)current^expected)&1)) {
+        machine.buttons=16;await_value("P",0);current=0;
     }
-    machine.buttons=current>expected?64:32;
-    await_value("P",expected);
-    machine.buttons=0;
-    at_game_loop();
+    if (current!=expected) {
+        machine.buttons=current>expected?16:128;await_value("P",expected);
+    }
+    machine.buttons=0;at_game_loop();
 }
-static void steering_step(uint8_t buttons, uint8_t key, unsigned expected, const char *message)
+static void steering_step(uint8_t buttons,uint8_t key,unsigned expected,const char *message)
 {
-    at_game_loop();
-    machine.buttons=buttons;
+    at_game_loop();machine.buttons=buttons;
     if (key) check(apple2_key(&machine,key),"steering fixture key accepted");
-    next_game_loop();
-    check(value("P")==expected,message);
+    next_game_loop();check(value("P")==expected,message);
 }
-static void pace(const char *label, uint8_t buttons, bool active)
+static void ball(unsigned x,unsigned y,int dx,int dy)
 {
-    position_paddle(33);
-    set_value("X",10);set_value("Y",32);set_value("DX",1);set_value("DY",-1);
-    seed_ball_pixel(10,32);
-    machine.buttons=buttons;
-    const uint64_t start=machine.cpu.total_cycle;
-    for (unsigned step=0;step<20;++step) {
-        if (active) machine.buttons=step&1?32:64;
+    at_game_loop();set_value("X",x);set_value("Y",y);
+    set_value("DX",dx);set_value("DY",dy);seed_ball_pixel(x,y);
+}
+static void pace(const char *label,uint8_t buttons,bool active)
+{
+    position_paddle(34);ball(18,10,-1,1);set_value("SP",1);
+    machine.buttons=buttons;const uint64_t start=machine.cpu.total_cycle;
+    for (unsigned step=0;step<16;++step) {
+        if (active) machine.buttons=step&1?128:16;
         next_game_loop();
-        check(value("X")==11+step && value("Y")==31-step,
-              "pace fixture advances one unobstructed ball step per loop");
-        if (active) check(value("P")==((step&1)?33:31),
-                          "held direction reverses paddle on the next loop");
+        check(value("X")==17-step && value("Y")==11+step,"pace follows the same clear-field path");
+        if (active) check(value("P")==((step&1)?34:32),"held reversal takes effect next loop");
     }
     const uint64_t elapsed=machine.cpu.total_cycle-start;
-    check(value("X")==30 && value("Y")==12,"pace fixture follows identical unobstructed ball path");
-    check(ball_pixels()==1,"pace fixture ends with one visible ball");
-    check(value("P")==33,"pace fixture paddle stays within bounds and reverses immediately");
-    printf("BREAKOUT %s: %.1f cycles/step, %.2f steps/s at 1.023 MHz\n",label,
-           elapsed/20.0,20.0*1023000/elapsed);
+    check(16.0*1023000/elapsed >= (active ? 14.7:19.0),"retains the previous game speed improvements");
+    check(ball_pixels()==1 && value("P")==34,"pace ends with visible ball and bounded paddle");
+    printf("BREAKOUT %s: %.1f cycles/step, %.2f steps/s at 1.023 MHz\n",label,elapsed/16.0,16.0*1023000/elapsed);
     machine.buttons=0;
 }
 
@@ -261,95 +271,83 @@ static void language_test(void)
 }
 static void game_test(void)
 {
-    type("HOME:RUN\r"); run(100000); await_text("A / SPACE TO LAUNCH");
-    check(!machine.text_mode && machine.mixed_mode && !machine.hires_mode, "game lores mixed mode");
-    await_value("BR", 36); await_value("L", 3); await_value("W", 1);
-    run(100000); at_game_loop();
-    const double waiting_x=value("X"),waiting_y=value("Y");
-    visible_game_loop(); visible_game_loop();
-    check(value("X")==waiting_x && value("Y")==waiting_y,"stationary waiting ball retained");
-    machine.buttons = 64;
-    await_value("P", 1);
-    machine.buttons = 32;
-    await_value("P", 33);
-    /* Lores y36 and y37 share bytes: moving the paddle must preserve every
-     * possible color nibble on the adjacent row, including a white ball. */
-    uint8_t row36[40];
-    for (unsigned col=0;col<40;++col) {
-        row36[col]=machine.ram[0x550+col]&15;
-        machine.ram[0x550+col]=(machine.ram[0x550+col]&0xf0)|(col&15);
+    type("HOME:RUN\r");run(100000);await_text("A / SPACE TO SERVE");
+    check(!machine.text_mode && machine.mixed_mode && !machine.hires_mode,"game lores mixed mode");
+    await_value("BR",160);await_value("L",5);await_value("W",1);at_game_loop();
+    const unsigned px=(unsigned)value("P"),bx=(unsigned)value("X"),by=(unsigned)value("Y");
+    for (unsigned y=0;y<40;++y) for (unsigned x=0;x<40;++x) {
+        const unsigned expected=x==bx && y==by ? 15 : x==0 && y>=px && y<px+6 ? 6 :
+            x>=20 && x<=34 && !(x&1) ? (((x-20)/2+y/2)&1 ? 13:9):1;
+        check(pixel(x,y)==expected,"historical magenta field, left blue paddle and 160 alternating bricks");
     }
-    steering_step(64,21,31,"fresh held LEFT overrides stale RIGHT cursor key");
-    steering_step(32,8,33,"quick held RIGHT reversal overrides stale LEFT cursor key");
-    steering_step(96,21,33,"opposed LEFT+RIGHT stays neutral despite queued cursor key");
-    steering_step(224,8,33,"opposed directions with UP stay neutral");
-    steering_step(192,21,31,"UP+LEFT overrides opposite cursor key");
-    steering_step(160,8,33,"UP+RIGHT overrides opposite cursor key");
-    steering_step(0,8,31,"cursor steering works after physical directions release");
-    for (unsigned col=0;col<40;++col) {
-        check((machine.ram[0x550+col]&15)==(col&15),"paddle redraw preserves adjacent y36 pixels");
-        machine.ram[0x550+col]=(machine.ram[0x550+col]&0xf0)|row36[col];
-    }
-    machine.buttons=0;
-    puts("PASS BREAKOUT quick held reversals, opposed directions and keyboard fallback");
-    machine.buttons = 8; await_value("W", 0); machine.buttons = 0;
-    at_game_loop();
-    const double previous_x=value("X"),previous_y=value("Y");
-    visible_game_loop();
-    check(value("X")!=previous_x || value("Y")!=previous_y,"monitored moving ball advanced");
-    puts("PASS BREAKOUT ball visible at every instruction through stationary waiting and moving steps");
-    /* A paused ball can be under a moving paddle at y37. Neither its native
-     * erase nor redraw may hide the ball, and the paddle must heal afterward. */
-    at_game_loop();set_value("H",1);set_value("X",20);set_value("Y",37);
-    seed_ball_pixel(20,37);machine.ram[0x550+20]|=8;
-    position_paddle(33);machine.buttons=64;
+    check(contains("1 2 3 4 5 6 7 8") && contains("5 BALLS LEFT"),"historic point scale and five balls");
+    check((machine.ram[0x73]|machine.ram[0x74]<<8)==0x9000,"native helper memory reserved below DOS");
+    frame("ready");visible_game_loop();visible_game_loop();
+    machine.buttons=16;await_value("P",0);machine.buttons=128;await_value("P",34);
+    steering_step(16,10,32,"held UP overrides stale DOWN cursor");
+    steering_step(128,11,34,"held DOWN reversal overrides stale UP cursor");
+    steering_step(144,11,34,"opposed UP/DOWN stays neutral");
+    steering_step(176,10,34,"opposed directions with RIGHT stays neutral");
+    steering_step(48,10,32,"UP/RIGHT overrides stale DOWN cursor");
+    steering_step(192,11,34,"DOWN/LEFT overrides stale UP cursor");
+    steering_step(0,11,32,"cursor UP works after physical directions release");
+    machine.buttons=0;at_game_loop();
+    check(value("X")==bx && (unsigned)value("Y")==by,"waiting ball stays at its original center serve");
+    puts("PASS historical layout, held UP/DOWN, opposed directions and keyboard fallback");
+    machine.buttons=8;await_value("W",0);machine.buttons=0;at_game_loop();
+    visible_game_loop();check(value("X")!=bx,"served ball travels left toward paddle");
+    at_game_loop();set_value("H",1);ball(0,20,1,1);position_paddle(34);
+    machine.buttons=16;
     for (unsigned step=0;step<8;++step) visible_game_loop();
-    check(value("P")==17 && value("X")==20 && value("Y")==37,
-          "paused ball remains stationary while paddle passes underneath");
-    machine.buttons=0;visible_game_loop();
-    set_value("X",10);set_value("Y",32);set_value("DX",1);set_value("DY",-1);
-    seed_ball_pixel(10,32);visible_game_loop();
-    check(machine.ram[0x550+20]==0xd8,"stationary paddle heals the vacated ball pixel and preserves y36");
+    check(value("P")==18 && value("X")==0 && value("Y")==20,"paused ball remains visible under moving paddle");
+    machine.buttons=0;ball(10,15,1,1);visible_game_loop();
+    check(pixel(0,20)==6,"stationary paddle heals its vacated ball pixel");
     set_value("H",0);
-    puts("PASS BREAKOUT visible paused ball under native paddle and stationary redraw repair");
-    pace("clear field",0,false);
-    pace("held RIGHT at clamp",32,false);
-    pace("active steering/redraw",0,true);
-    at_game_loop(); machine.buttons = 4; await_value("H", 1);
-    run(100000);check(value("H")==1,"held B toggles pause only once");
-    machine.buttons = 0;
-    run(10000);
-    const double paused_x = value("X"), paused_y = value("Y");
-    run(100000);
-    check(value("H") == 1 && value("X") == paused_x && value("Y") == paused_y,
-          "B pause holds ball while input continues");
-    machine.buttons = 4; await_value("H", 0); machine.buttons = 0;
-    /* Set ordinary Applesoft numeric variables at its main loop, without game test hooks. */
-    at_game_loop(); set_value("X", 3); set_value("Y", 6); set_value("DX", 1); set_value("DY", -1);
-    await_value("S", 10); await_value("BR", 35);
-    position_paddle(19); set_value("X", 20); set_value("Y", 36);
-    set_value("DX", 1); set_value("DY", 1); await_value("DY", -1);
-    check(value("L") == 3, "paddle bounce preserves life");
-    at_game_loop(); set_value("X", 38); set_value("Y", 20); set_value("DX", 1); set_value("DY", -1);
-    await_value("DX", -1);
-    at_game_loop(); set_value("X", 20); set_value("Y", 1); set_value("DX", 1); set_value("DY", -1);
-    await_value("DY", 1);
-    position_paddle(19); set_value("X", 1); set_value("Y", 38);
-    set_value("DX", 1); set_value("DY", 1);
-    seed_ball_pixel(1,38); visible_game_loop();
-    await_value("L", 2); await_value("W", 1); visible_game_loop();
-    check(value("X")==value("P")+2 && value("Y")==35,"waiting ball repositioned after lost life");
-    puts("PASS BREAKOUT ball stays visible through lost life and waiting-ball reposition");
-    machine.buttons = 8; await_value("W", 0); machine.buttons = 0;
-    at_game_loop(); set_value("X", 3); set_value("Y", 8); set_value("DX", 1); set_value("DY", -1);
-    set_value("BR", 1); await_text("YOU WIN!");
-    machine.buttons = 0; run(10000); machine.buttons = 8; await_value("L", 3);
-    machine.buttons = 0; await_value("W", 1);
-    machine.buttons = 8; await_value("W", 0); machine.buttons = 0;
-    position_paddle(19); set_value("L", 1); set_value("X", 1); set_value("Y", 38);
-    set_value("DX", 1); set_value("DY", 1); await_text("GAME OVER");
-    puts("PASS BREAKOUT real Applesoft: lores, held/cursor steering, A launch, B pause, walls/paddle, brick/score, lost life, win/restart, game over");
+    puts("PASS ball visibility at every instruction, including native paddle repaint");
+    pace("clear field",0,false);pace("held DOWN at clamp",128,false);pace("active steering/redraw",0,true);
+    at_game_loop();machine.buttons=4;await_value("H",1);run(100000);
+    check(value("H")==1,"held B pauses only once");machine.buttons=0;run(10000);
+    const double paused_x=value("X"),paused_y=value("Y");run(100000);
+    check(value("X")==paused_x && value("Y")==paused_y,"B pause holds ball");
+    machine.buttons=4;await_value("H",0);machine.buttons=0;
+    at_game_loop();set_value("W",1);position_paddle(18);set_value("W",0);set_value("L",5);
+    for (unsigned hit=0;hit<6;++hit) {
+        ball(1,18+hit,-1,0);const unsigned edges=machine.speaker_edges;
+        next_game_loop();
+        check(value("DX")==1 && fabs(value("DY")-(2*(int)hit-5)/3.0)<1e-8,"paddle contact sets the original six rebound angles");
+        check(value("L")==5 && machine.speaker_edges>edges,"paddle bounce preserves ball and clicks speaker");
+    }
+    at_game_loop();set_value("N",9);set_value("SP",1);ball(1,21,-1,0);next_game_loop();
+    check(value("N")==10 && value("SP")==2 && value("DX")==2,"ten returns double horizontal ball speed");
+    next_game_loop();check(value("X")==2,"faster ball advances two columns");
+    ball(39,15,1,0);next_game_loop();check(value("DX")==-1 && value("X")==38,"right wall rebound");
+    ball(10,0,1,-1);next_game_loop();check(value("DY")==1 && value("Y")==0,"upper boundary rebound");
+    ball(10,39,1,1);next_game_loop();check(value("DY")==-1 && value("Y")==39,"lower boundary rebound");
+    ball(1,0,-1,0);visible_game_loop();await_value("L",4);await_value("W",1);
+    visible_game_loop();await_value("Q",0);
+    check(value("X")==19 && value("N")==0 && value("SP")==1,"new ball starts centrally at initial speed");
+    machine.buttons=8;await_value("W",0);machine.buttons=0;at_game_loop();
+    set_value("L",5);set_value("SP",1);
+    unsigned score=(unsigned)value("S"),bricks=(unsigned)value("BR");
+    for (unsigned c=0;c<8;++c) for (unsigned r=0;r<20;++r) {
+        if (pixel(20+2*c,2*r)==1) continue;
+        ball(19+2*c,2*r,1,0);score+=c+1;--bricks;
+        await_value("S",score);await_value("BR",bricks);
+        if (bricks) {
+            at_game_loop();check(pixel(20+2*c,2*r)==1 && pixel(20+2*c,2*r+1)==1,"each struck two-cell brick disappears");
+            check(value("DX")==-1,"brick sends ball back left");
+            if (c==0 && r==9) frame("playing");
+        }
+    }
+    await_text("YOU WIN!");check(score==720 && value("S")==720,"all 160 bricks total a perfect 720 points");
+    machine.buttons=0;run(10000);machine.buttons=8;await_value("S",0);machine.buttons=0;
+    await_text("A / SPACE TO SERVE");await_value("W",1);
+    machine.buttons=8;await_value("W",0);machine.buttons=0;position_paddle(18);
+    at_game_loop();set_value("L",1);ball(1,0,-1,0);await_text("GAME OVER");
+    check(contains("TERRIBLE!"),"original score rating shown after final missed ball");
+    puts("PASS original scoring, angles, acceleration, walls, all 160 bricks, five balls, win/restart and score rating");
 }
+
 int main(int argc, char **argv)
 {
     if (argc != 5) return 2;
@@ -365,7 +363,13 @@ int main(int argc, char **argv)
     fclose(image); image = fopen(argv[3], "r+b");
     check(image && disk2_init(&disk, slot_rom, read_track, write_track, NULL), "disk reopened");
     apple2_reset(&machine, true); ready(); type("LOAD BREAKOUT\r"); ready(); game_test();
+    type("\003");ready();type("TEXT:HOME:SAVE BREAKOUT\r");ready();
+    check(disk2_flush(&disk) && !disk.error,"SAVE remains usable after native game code ran");
+    fclose(image);image=fopen(argv[3],"r+b");
+    check(image && disk2_init(&disk,slot_rom,read_track,write_track,NULL),"post-game disk reopened");
+    apple2_reset(&machine,true);ready();type("LOAD BREAKOUT\r");ready();type("RUN\r");
+    await_text("A / SPACE TO SERVE");await_value("BR",160);await_value("L",5);
     fclose(image);
-    puts("PASS BREAKOUT SAVE, image close/reopen, reboot, LOAD and RUN with actual ROM and Disk II");
+    puts("PASS BREAKOUT SAVE before/after play, image reopen, reboot, LOAD and RUN with actual ROM and Disk II");
     return 0;
 }
