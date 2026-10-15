@@ -64,6 +64,7 @@ def main():
             setattr(args, name, value.resolve())
     BUILD.mkdir(parents=True, exist_ok=True)
     print('Checking release inputs and portable tools', flush=True)
+    run([sys.executable, ROOT / 'tools/generate_breakout_input.py', '--check', ROOT / 'basic/BREAKOUT.bas'])
     run([sys.executable, '-m', 'unittest', 'discover', '-s', ROOT / 'tools/tests', '-p', 'test*.py'], timeout=60)
     if (ROOT / '.git').exists():
         run([sys.executable, ROOT / 'tools/check_public.py'])
@@ -98,8 +99,13 @@ def main():
     diagnostic = BUILD / 'diagnostic_image.c'
     run([sys.executable, MCU / 'tools/embed_rom.py', '--output', diagnostic])
     c_test('apple2', [*cpu, str(diagnostic), 'tests/apple2_test.c'], cpu_flags)
+    c_test('breakout_input', [*cpu, 'tests/breakout_input_test.c'], cpu_flags,
+           [ROOT / 'basic/BREAKOUT.bas'])
     c_test('disk2', ['main/disk2.c', 'tests/disk2_test.c'])
     c_test('video', ['main/video_render.c', 'tests/video_render_test.c'])
+    c_test('video_delta', ['main/video_delta.c', 'tests/video_delta_test.c'])
+    c_test('video_link', ['main/video_delta.c', 'main/video_link.c', 'tests/video_link_test.c'],
+           ['-Itests/video_stubs'])
     c_test('audio', ['main/audio.c', 'tests/audio_test.c'], ['-DA2_AUDIO_PORTABLE_ONLY'])
     c_test('audio_hook', [*cpu, str(diagnostic), 'tests/audio_hook_test.c'], cpu_flags)
     c_test('handheld_ui', ['main/handheld_ui.c', 'tests/handheld_ui_test.c'])

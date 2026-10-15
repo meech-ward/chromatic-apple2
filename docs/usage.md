@@ -23,7 +23,11 @@ running so typed characters can be consumed. Physical MENU presses are retained
 across delayed polling. Device Info shows the assigned IP and storage state.
 
 The included original [Breakout source](../basic/BREAKOUT.bas) uses held left/right
-to move, A to launch and B to pause. BASIC programs can read the held-button mask
+to move, A to launch and B to pause. Its BASIC game logic uses a small original
+6502 routine for input and paddle drawing. The readable
+[helper generator](../tools/generate_breakout_input.py) reproduces its embedded
+DATA lines; `python3 tools/generate_breakout_input.py --check basic/BREAKOUT.bas`
+checks that they match. BASIC programs can read the held-button mask
 with `PEEK(49392)` (`$C0F0`): START=1, SELECT=2, B=4, A=8, UP=16, RIGHT=32,
 LEFT=64 and DOWN=128. Menu controls are withheld from the game while visible.
 

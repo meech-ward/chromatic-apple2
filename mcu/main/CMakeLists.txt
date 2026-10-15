@@ -23,7 +23,7 @@ if(PRIVATE_CONFIG)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PRIVATE_CONFIG}")
 endif()
 idf_component_register(SRCS "main.c" "apple2.c" "disk2.c" "shell_link.c" "network.c"
-    "video_render.c" "video_link.c" "cart_commands.c" "cart_storage.c" "handheld_ui.c" "audio.c"
+    "video_render.c" "video_delta.c" "video_link.c" "cart_commands.c" "cart_storage.c" "handheld_ui.c" "audio.c"
     "../../storage/a2_storage.c" "../../storage/a2_is29gl032.c" "../../storage/a2_import.c"
     "../../storage/a2_disk_overlay.c"
     "../../storage/a2_dos_catalog.c"

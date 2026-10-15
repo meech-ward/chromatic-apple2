@@ -38,6 +38,7 @@ static uint8_t framebuffer[A2_FRAME_BYTES] __attribute__((aligned(4)));
 static atomic_uint video_frames;
 static atomic_uint video_crc;
 static atomic_int video_error;
+static atomic_uint video_samples, video_wait_us, video_render_us, video_send_us;
 static handheld_ui_t ui;
 static uint8_t overlay[HANDHELD_UI_PAGE_BYTES];
 static char pending_keys[64];
@@ -217,7 +218,7 @@ void control_status(char *output, size_t capacity)
         "{\"version\":\"apple2-foundation-1\",\"rom\":\"%s\",\"rom_bytes\":%u,"
         "\"ram_bytes\":49152,\"machine_bytes\":%u,\"pc\":%u,\"cycles\":%" PRIu64 ","
         "\"running\":%s,\"key_ready\":%s,\"diagnostic\":[%u,%u,%u],"
-        "\"free_heap\":%u,\"minimum_free_heap\":%u,\"video_frames\":%u,\"video_crc\":%u,\"video_error\":%d,\"storage_error\":%d,\"storage_saving\":%s,"
+        "\"free_heap\":%u,\"minimum_free_heap\":%u,\"video_frames\":%u,\"video_crc\":%u,\"video_error\":%d,\"video_bytes\":%u,\"video_full_frames\":%u,\"video_samples\":%u,\"video_wait_us\":%u,\"video_render_us\":%u,\"video_send_us\":%u,\"storage_error\":%d,\"storage_saving\":%s,"
         "\"audio_samples\":%u,\"audio_error\":%d,\"audio_armed\":%s,\"audio_underruns\":%u,\"audio_overflows\":%u,"
         "\"ui_mode\":%u,\"program_selection\":%u,\"program_count\":%u,\"launch_pending\":%s,\"buttons\":%u,\"physical_buttons\":%u,"
         "\"physical_menu_sequence\":%u,\"physical_menu_acknowledged\":%u,\"text_mode\":%s,\"ip\":\"%s\"}\n",
@@ -226,7 +227,9 @@ void control_status(char *output, size_t capacity)
         machine.ram[0x200], machine.ram[0x201], machine.ram[0x202],
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
         (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT),
-        atomic_load(&video_frames),atomic_load(&video_crc),atomic_load(&video_error),cart_storage_error(),cart_storage_saving() ? "true" : "false",
+        atomic_load(&video_frames),atomic_load(&video_crc),atomic_load(&video_error),
+        (unsigned)video_link_bytes(),(unsigned)video_link_full_frames(),
+        atomic_load(&video_samples),atomic_load(&video_wait_us),atomic_load(&video_render_us),atomic_load(&video_send_us),cart_storage_error(),cart_storage_saving() ? "true" : "false",
         (unsigned)sound.samples,sound.error,sound.armed ? "true" : "false",(unsigned)sound.underruns,(unsigned)sound.overflows,
         (unsigned)ui.mode,ui.program_selection,ui.catalog.count,launch_pending ? "true" : "false",machine.buttons,physical_buttons,
         (unsigned)physical_menu_sequence,(unsigned)menu_sequence,machine.text_mode ? "true" : "false",network_ip());
@@ -511,10 +514,13 @@ static void video_task(void *unused)
 {
     (void)unused;
     uint32_t previous_crc=0;
-    int64_t last_send=0;
+    int64_t last_full=0;
+    bool retry=false;
     for (;;) {
         const int64_t now=esp_timer_get_time();
         xSemaphoreTake(machine_lock, portMAX_DELAY);
+        const int64_t render_begin=esp_timer_get_time();
+        atomic_fetch_add(&video_wait_us,(unsigned)(render_begin-now));
         cart_storage_autoboot();
         if (handheld_ui_visible(&ui)) {
             render_ui_unlocked();
@@ -523,17 +529,25 @@ static void video_task(void *unused)
                      machine.mixed_mode,machine.hires_mode,(now/500000)&1,12,framebuffer);
         xSemaphoreGive(machine_lock);
         const uint32_t crc=esp_crc32_le(0, framebuffer, sizeof(framebuffer));
-        if (!last_send || crc!=previous_crc || now-last_send>=2000000) {
-            const esp_err_t result=video_link_frame(framebuffer);
+        atomic_fetch_add(&video_render_us,(unsigned)(esp_timer_get_time()-render_begin));
+        atomic_fetch_add(&video_samples,1);
+        const bool force_full=!last_full || now-last_full>=2000000;
+        if (force_full || retry || crc!=previous_crc) {
+            const unsigned full_before=video_link_full_frames();
+            const int64_t send_begin=esp_timer_get_time();
+            const esp_err_t result=video_link_frame(framebuffer,force_full);
+            atomic_fetch_add(&video_send_us,(unsigned)(esp_timer_get_time()-send_begin));
             atomic_store(&video_error, result);
+            retry=result!=ESP_OK;
             if (result==ESP_OK) {
                 atomic_fetch_add(&video_frames, 1);
                 atomic_store(&video_crc,crc);
                 previous_crc=crc;
-                last_send=now;
+                if (video_link_full_frames()!=full_before) last_full=now;
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(50));
+        /* Small changed regions no longer wait behind a full-frame transfer. */
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -578,7 +592,9 @@ void app_main(void)
                     ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(input_task, "apple2_input", 6144, NULL, 3, NULL) == pdPASS
                     ? ESP_OK : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(xTaskCreate(video_task, "apple2_video", 6144, NULL, 2, NULL) == pdPASS
+    /* Match input/audio priority so continuous BASIC work cannot starve video.
+     * SPI DMA blocks while sending, leaving those tasks time to run. */
+    ESP_ERROR_CHECK(xTaskCreate(video_task, "apple2_video", 6144, NULL, 3, NULL) == pdPASS
                     ? ESP_OK : ESP_ERR_NO_MEM);
     network_start();
     ssh_terminal_start();
