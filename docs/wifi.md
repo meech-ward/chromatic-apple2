@@ -22,7 +22,7 @@ python3 tools/configure.py
 Enter its exact network name and Wi-Fi password, then choose a separate SSH
 password or leave it blank to generate one. Use a 2.4 GHz WPA2-Personal network;
 enterprise authentication and captive-portal sign-in are not configured. Joining
-a phone hotspot uses this same mode; phone compatibility varies.
+a phone hotspot uses this same mode; it has not been physically tested.
 
 To create a Chromatic hotspot instead:
 
@@ -94,8 +94,9 @@ python3 client.py --host 192.168.4.1 --config build/hotspot-local.json status
 After installing either mode, verify Device Info, SSH login, terminal input and
 HTTP status. Disconnect/reconnect the computer, then check that a fresh SSH login
 works. In hotspot mode, confirm the computer received a `192.168.4.x` DHCP address.
-Host tests cover configuration validation and both network event paths; physical
-Wi-Fi observations belong in the [verification record](verification.md).
+Host tests cover configuration validation and both network event paths. The
+[hardware verification](verification.md) covers a Mac joining the Chromatic
+hotspot, SSH, BASIC save/load and Wi-Fi reconnection.
 
 If connecting fails:
 
