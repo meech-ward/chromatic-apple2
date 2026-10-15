@@ -6,7 +6,7 @@
 bool control_command(const char *command, char *output, size_t capacity);
 void control_status(char *output, size_t capacity);
 void control_text(char *output, size_t capacity);
-/* Nonblocking terminal input: false means retry after the emulator consumes
+/* Bounded-wait terminal input: false means retry after the emulator consumes
  * its current key. Ctrl-] opens MENU; menu arrows/Return/Escape navigate it. */
 bool control_terminal_key(unsigned char key);
 bool control_terminal_text(char *output, size_t capacity);

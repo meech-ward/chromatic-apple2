@@ -11,7 +11,9 @@ const char WIFI_EVENT[]="wifi";
 const char IP_EVENT[]="ip";
 static esp_netif_t ap_interface={.mode=WIFI_MODE_AP}, sta_interface={.mode=WIFI_MODE_STA};
 static unsigned initializations, connects, disconnects, starts, servers, handlers, status_calls;
-static unsigned saves, mode_changes;
+static unsigned saves, mode_changes, stops, power_saves;
+static bool stored_enabled=true;
+static esp_err_t power_save_error=ESP_OK, power_load_error=ESP_OK;
 static int selected_mode;
 static int socket_family=AF_INET;
 static const char *native_ipv6;
@@ -30,6 +32,15 @@ struct queued_event { esp_event_base_t base; int32_t id; uint8_t data[512]; size
 static struct queued_event events[32];
 static unsigned event_count;
 
+esp_err_t wifi_store_load_enabled(bool *value) {
+    if(power_load_error!=ESP_OK)return power_load_error;
+    *value=stored_enabled;return ESP_OK;
+}
+esp_err_t wifi_store_save_enabled(bool value) {
+    power_saves++;
+    if(power_save_error!=ESP_OK)return power_save_error;
+    stored_enabled=value;return ESP_OK;
+}
 esp_err_t nvs_flash_init(void) { initializations++;return ESP_OK; }
 esp_err_t wifi_store_load(wifi_profile_t *profile) {
     if(load_error!=ESP_OK)return load_error;
@@ -73,6 +84,7 @@ esp_err_t esp_wifi_set_config(int mode,const wifi_config_t *config) {
     return ESP_OK;
 }
 esp_err_t esp_wifi_start(void) { starts++;return ESP_OK; }
+esp_err_t esp_wifi_stop(void) { stops++;return ESP_OK; }
 esp_err_t esp_wifi_connect(void) { connects++;return ESP_OK; }
 esp_err_t esp_wifi_disconnect(void) { disconnects++;return ESP_OK; }
 esp_err_t esp_wifi_get_mode(wifi_mode_t *mode) { *mode=selected_mode;return ESP_OK; }
@@ -368,6 +380,7 @@ int main(int argc,char **argv) {
         stored_profile=(wifi_profile_t){.mode=!strcmp(scenario,"stored-hotspot")?
             WIFI_PROFILE_HOTSPOT:WIFI_PROFILE_STATION,.ssid="Saved Network",.password="saved-password"};
     } else if(!strcmp(scenario,"load-failed"))load_error=ESP_FAIL;
+    if(!strcmp(scenario,"power-off"))stored_enabled=false;
     const wifi_profile_t expected=no_store ? (wifi_profile_t){
         .mode=DEVICE_WIFI_AP?WIFI_PROFILE_HOTSPOT:WIFI_PROFILE_STATION,
         .ssid=DEVICE_WIFI_SSID,.password=DEVICE_WIFI_PASSWORD} : stored_profile;
@@ -383,6 +396,48 @@ int main(int argc,char **argv) {
     assert(!info.ssid[0] && !info.password[0] && strstr(info.status,"NOT AVAILABLE"));
     network_setup_stop();
 #else
+    if(!strcmp(scenario,"power-off")) {
+        assert(initializations==1 && !starts && !servers && !network_ready());
+        network_setup_info_t info;network_setup_info(&info);
+        assert(!info.enabled && !strcmp(info.network_ssid,expected.ssid));
+        mock_time=120000000;timer_args.callback(NULL);drain();
+        assert(!starts && !setup_active);
+        ip_event_got_ip_t stale={.ip_info={.ip={{192,0,2,77}}}};
+        deliver(WIFI_EVENT,WIFI_EVENT_STA_START,NULL);
+        deliver(WIFI_EVENT,WIFI_EVENT_AP_START,NULL);
+        deliver(IP_EVENT,IP_EVENT_STA_GOT_IP,&stale);
+        assert(!connects && !network_ready());
+        power_save_error=ESP_FAIL;
+        assert(network_set_enabled(true));drain();
+        network_setup_info(&info);assert(!info.enabled && strstr(info.state,"COULD NOT SAVE"));
+        assert(!starts);
+        power_save_error=ESP_OK;
+        assert(network_set_enabled(true));drain();
+        network_setup_info(&info);assert(info.enabled && starts==1);
+        assert(profile.mode==expected.mode && !strcmp(profile.ssid,expected.ssid));
+        assert(!strcmp(profile.password,expected.password));
+        if(expected.mode==WIFI_PROFILE_HOTSPOT)deliver(WIFI_EVENT,WIFI_EVENT_AP_START,NULL);
+        else deliver(IP_EVENT,IP_EVENT_STA_GOT_IP,&stale);
+        assert(network_ready());
+        assert(network_set_enabled(false));drain();
+        assert(stops==1 && !network_ready() && !strcmp(network_ip(),"0.0.0.0"));
+        assert(!stored_enabled);
+        deliver(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,NULL);
+        deliver(WIFI_EVENT,WIFI_EVENT_AP_START,NULL);
+        deliver(IP_EVENT,IP_EVENT_STA_GOT_IP,&stale);
+        assert(!network_ready());
+        mock_time+=120000000;timer_args.callback(NULL);drain();
+        assert(!setup_active && starts==1);
+        assert(network_setup_start());drain();
+        network_setup_info(&info);
+        assert(info.enabled && stored_enabled && setup_active && starts==2);
+        assert(!strcmp(info.network_ssid,expected.ssid));
+        if(expected.mode==WIFI_PROFILE_STATION)assert(connecting_since==mock_time);
+        network_setup_stop();drain();
+        assert(!setup_active && stored_enabled && profile.mode==expected.mode);
+        puts("PASS actual networking power preference, off boot, failure isolation, stale events and explicit setup recovery");
+        return 0;
+    }
     assert(initializations==1 && starts==1 && !servers && !network_ready());
     assert(timer_args.callback);
     if(expected.mode==WIFI_PROFILE_HOTSPOT) {

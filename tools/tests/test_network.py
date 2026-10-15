@@ -45,7 +45,7 @@ class NetworkModes(unittest.TestCase):
                     result = subprocess.run(command, capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     scenarios = ('defaults',) if not enabled else (
-                        'defaults', 'stored-station', 'stored-hotspot', 'load-failed')
+                        'defaults', 'stored-station', 'stored-hotspot', 'load-failed', 'power-off')
                     for scenario in scenarios:
                         with self.subTest(scenario=scenario):
                             result = subprocess.run([str(binary), scenario], capture_output=True, text=True, timeout=10)

@@ -9,7 +9,7 @@ static const char character_keys[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;()
 enum { CHARACTER_COUNT = sizeof(character_keys) - 1, KEY_COUNT = CHARACTER_COUNT + 3 };
 static const char *const menu_items[] = {
     "PROGRAMS", "RESUME", "KEYBOARD", "SAVE BASIC", "LOAD BASIC", "RESTART", "DEVICE INFO",
-    "WI-FI SETUP"
+    "WI-FI"
 };
 enum { MENU_COUNT = sizeof(menu_items) / sizeof(menu_items[0]) };
 
@@ -18,7 +18,8 @@ bool handheld_ui_visible(const handheld_ui_t *ui) { return ui->mode != HANDHELD_
 bool handheld_ui_pauses_emulation(const handheld_ui_t *ui)
 {
     return ui->mode == HANDHELD_UI_MENU || ui->mode == HANDHELD_UI_PROGRAMS ||
-           ui->mode == HANDHELD_UI_INFO || ui->mode == HANDHELD_UI_WIFI_SETUP;
+           ui->mode == HANDHELD_UI_INFO || ui->mode == HANDHELD_UI_WIFI_SETUP ||
+           ui->mode == HANDHELD_UI_WIFI;
 }
 
 bool handheld_ui_press(handheld_ui_t *ui, uint16_t button)
@@ -75,6 +76,11 @@ static void navigate(handheld_ui_t *ui, uint16_t direction)
         if (selection < ui->program_scroll) ui->program_scroll = selection;
         if (selection >= ui->program_scroll + PROGRAM_ROWS)
             ui->program_scroll = selection - PROGRAM_ROWS + 1;
+        return;
+    }
+    if (ui->mode == HANDHELD_UI_WIFI) {
+        if (direction == HANDHELD_BTN_UP || direction == HANDHELD_BTN_DOWN)
+            ui->wifi_selection ^= 1;
         return;
     }
     if (ui->mode == HANDHELD_UI_MENU) {
@@ -144,9 +150,10 @@ handheld_ui_event_t handheld_ui_update(handheld_ui_t *ui, uint16_t buttons, uint
         return event;
     }
     if (!hidden && (edges & HANDHELD_BTN_B)) {
-        if (ui->mode == HANDHELD_UI_WIFI_SETUP)
+        if (ui->mode == HANDHELD_UI_WIFI_SETUP) {
             event.action = HANDHELD_ACTION_STOP_WIFI_SETUP;
-        if (ui->mode == HANDHELD_UI_MENU) {
+            mode(ui, HANDHELD_UI_WIFI);
+        } else if (ui->mode == HANDHELD_UI_MENU) {
             mode(ui, HANDHELD_UI_HIDDEN);
             event.action = HANDHELD_ACTION_RESUME;
         } else mode(ui, HANDHELD_UI_MENU);
@@ -167,6 +174,13 @@ handheld_ui_event_t handheld_ui_update(handheld_ui_t *ui, uint16_t buttons, uint
             ui->last_key = event.key;
             ui->has_last_key = true;
             event.changed = true;
+        } else if (ui->mode == HANDHELD_UI_WIFI) {
+            if (!ui->wifi_selection) event.action = HANDHELD_ACTION_TOGGLE_WIFI;
+            else {
+                mode(ui, HANDHELD_UI_WIFI_SETUP);
+                event.action = HANDHELD_ACTION_START_WIFI_SETUP;
+            }
+            event.changed = true;
         } else if (ui->mode == HANDHELD_UI_MENU) {
             switch (ui->menu_selection) {
             case 0:
@@ -181,8 +195,8 @@ handheld_ui_event_t handheld_ui_update(handheld_ui_t *ui, uint16_t buttons, uint
             case 5: event.action = HANDHELD_ACTION_RESTART; mode(ui, HANDHELD_UI_HIDDEN); break;
             case 6: mode(ui, HANDHELD_UI_INFO); break;
             case 7:
-                mode(ui, HANDHELD_UI_WIFI_SETUP);
-                event.action = HANDHELD_ACTION_START_WIFI_SETUP;
+                ui->wifi_selection = 0;
+                mode(ui, HANDHELD_UI_WIFI);
                 break;
             default: break;
             }
@@ -215,10 +229,12 @@ handheld_ui_event_t handheld_ui_update(handheld_ui_t *ui, uint16_t buttons, uint
             return event;
         }
         const unsigned before = ui->mode == HANDHELD_UI_MENU ? ui->menu_selection :
-                                ui->mode == HANDHELD_UI_PROGRAMS ? ui->program_selection : ui->key_selection;
+                                ui->mode == HANDHELD_UI_PROGRAMS ? ui->program_selection :
+                                ui->mode == HANDHELD_UI_WIFI ? ui->wifi_selection : ui->key_selection;
         navigate(ui, direction);
         const unsigned after = ui->mode == HANDHELD_UI_MENU ? ui->menu_selection :
-                               ui->mode == HANDHELD_UI_PROGRAMS ? ui->program_selection : ui->key_selection;
+                               ui->mode == HANDHELD_UI_PROGRAMS ? ui->program_selection :
+                               ui->mode == HANDHELD_UI_WIFI ? ui->wifi_selection : ui->key_selection;
         event.changed = before != after;
     }
     return event;
@@ -301,6 +317,28 @@ void handheld_ui_render(const handheld_ui_t *ui, const handheld_ui_info_t *info,
         }
         text(page, 18, 1, "SP SPACE  BS DELETE  CR RETURN", false);
         text(page, 20, 1, "A TYPE     B MENU", false);
+    } else if (ui->mode == HANDHELD_UI_WIFI) {
+        line(page, 0, "WI-FI", true);
+        snprintf(buffer, sizeof(buffer), "MODE: %-12s %s",
+                 info && info->wifi_hotspot ? "HOTSPOT" : "JOIN NETWORK",
+                 info && info->wifi_enabled ? "ON" : "OFF");
+        line(page, 2, buffer, false);
+        line(page, 4, "NETWORK:", false);
+        line(page, 5, info && info->wifi_ssid ? info->wifi_ssid : "NOT SET", false);
+        snprintf(buffer, sizeof(buffer), "IP: %s", info && info->ip ? info->ip : "NOT CONNECTED");
+        line(page, 7, buffer, false);
+        snprintf(buffer, sizeof(buffer), "SSH USER: %s", info && info->ssh_user ? info->ssh_user : "NOT SET");
+        line(page, 9, buffer, false);
+        line(page, 10, "SSH PASSWORD:", false);
+        const char *password = info && info->ssh_password ? info->ssh_password : "SEE PRIVATE SETTINGS";
+        line(page, 11, password, false);
+        if (strlen(password) > 39) line(page, 12, password + 39, false);
+        if (info && info->wifi_status) line(page, 14, info->wifi_status, false);
+        line(page, 17, info && info->wifi_enabled ? "TURN WI-FI OFF" : "TURN WI-FI ON",
+             ui->wifi_selection == 0);
+        line(page, 19, "CHANGE WI-FI / PASSWORD", ui->wifi_selection == 1);
+        text(page, 21, 1, "SETTINGS KEPT WHEN OFF OR RESTARTED", false);
+        text(page, 22, 1, "A SELECT   B MENU", false);
     } else if (ui->mode == HANDHELD_UI_WIFI_SETUP) {
         line(page, 0, "WI-FI SETUP", true);
         line(page, 2, "1 JOIN THIS WI-FI NETWORK", false);
@@ -315,7 +353,7 @@ void handheld_ui_render(const handheld_ui_t *ui, const handheld_ui_info_t *info,
         line(page, 13, "3 CHOOSE WI-FI AND SAVE", false);
         line(page, 16, info && info->wifi_setup_status ? info->wifi_setup_status :
                     "EXISTING SETTINGS KEPT UNTIL SAVE", false);
-        text(page, 20, 1, "B CLOSE SETUP AND RETURN TO MENU", false);
+        text(page, 20, 1, "B CLOSE SETUP AND RETURN TO WI-FI", false);
     } else {
         line(page, 0, "DEVICE INFO", true);
         snprintf(buffer, sizeof(buffer), "IP: %s", info && info->ip ? info->ip : "NOT CONNECTED");
@@ -328,7 +366,7 @@ void handheld_ui_render(const handheld_ui_t *ui, const handheld_ui_info_t *info,
         line(page, 15, info && info->disk_state ? info->disk_state : "UNKNOWN", false);
         text(page, 20, 1, "B MENU", false);
     }
-    if (ui->mode != HANDHELD_UI_WIFI_SETUP && info && info->status)
+    if (ui->mode != HANDHELD_UI_WIFI_SETUP && ui->mode != HANDHELD_UI_WIFI && info && info->status)
         line(page, 21, info->status, false);
     text(page, 23, 1, "MENU RESUME", false);
 }

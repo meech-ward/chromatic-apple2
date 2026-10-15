@@ -41,8 +41,10 @@ mkdir -p build/private
 
 The configuration tool prompts for Wi-Fi and SSH settings, generates a random API
 token, and writes `build/device-local.json` with mode `0600`. A generated SSH
-password is stored in that file. These Wi-Fi settings are first-boot defaults;
-a profile saved through **MENU → WI-FI SETUP** takes precedence on later starts.
+password uses two words and four digits, such as `MINT-LAKE-4826`, and is stored
+in that file. Blank hotspot passwords use the same format, independently; custom
+passwords are kept as entered. These Wi-Fi settings are first-boot defaults;
+a profile saved through **MENU → WI-FI → CHANGE WI-FI / PASSWORD** takes precedence on later starts.
 SSH/API credentials remain build settings. The inert
 [example configuration](../examples/device-local.example.json) documents its
 fields; replace its placeholders if creating a file manually.

@@ -20,6 +20,7 @@
 #define DEVICE_SSH_PASSWORD ""
 #endif
 static const char *TAG = "apple2_ssh";
+enum { SCREEN_REFRESH_MS = 40 };
 static TaskHandle_t task;
 static char snapshot[1024], last_frame[24][40], pending_output[2048];
 static size_t output_length, output_position;
@@ -129,6 +130,14 @@ static void input(uint32_t now) {
         decode(byte, now);
     }
 }
+static bool sync_network(bool *enabled) {
+    bool ready = network_ready();
+    if (ready != *enabled) {
+        if (!ssh_transport_set_enabled(ready)) return false;
+        *enabled = ready;
+    }
+    return ready;
+}
 static void ssh_task(void *unused) {
     (void)unused;
     while (!network_ready()) vTaskDelay(pdMS_TO_TICKS(250));
@@ -141,18 +150,23 @@ static void ssh_task(void *unused) {
     }
     ESP_LOGI(TAG, "SSH ready: user apple, port22, Ctrl] opens menu");
     uint32_t session = 0, refresh_at = 0, eof_at = 0;
+    bool enabled = true;
     for (;;) {
+        if (!sync_network(&enabled)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
         ssh_transport_poll();
         uint32_t now = (uint32_t)(esp_timer_get_time()/1000);
         if (ssh_transport_connected()) {
             if (session != ssh_transport_session_id()) {
                 session = ssh_transport_session_id(); force_frame = true;
                 output_position = output_length = 0; escape_size = 0;
-                key_pending = replay_pending = skip_lf = false; eof_at = 0; refresh_at = now-100;
+                key_pending = replay_pending = skip_lf = false; eof_at = 0; refresh_at = now-SCREEN_REFRESH_MS;
             }
             input(now); send_output();
             bool refreshed = false;
-            if ((uint32_t)(now-refresh_at) >= 100 && !output_length) {
+            if ((uint32_t)(now-refresh_at) >= SCREEN_REFRESH_MS && !output_length) {
                 refreshed = screen(); if (refreshed) refresh_at = now;
             }
             if (ssh_transport_input_ended() && !key_pending && !replay_pending && !escape_size) {
@@ -168,6 +182,8 @@ void ssh_terminal_start(void) {
     if (task || !DEVICE_SSH_ENABLED) return;
     size_t length = strlen(DEVICE_SSH_PASSWORD);
     if (length < 8 || length > 64) { ESP_LOGE(TAG, "SSH password needs8..64bytes"); return; }
-    if (xTaskCreatePinnedToCore(ssh_task, "apple2_ssh", 12*1024, NULL, 3, &task, 0) != pdPASS)
+    /* Short input/snapshot work takes precedence over the emulator; the task
+     * yields for 10 ms after every poll so emulation and video keep running. */
+    if (xTaskCreatePinnedToCore(ssh_task, "apple2_ssh", 12*1024, NULL, 5, &task, 0) != pdPASS)
         ESP_LOGE(TAG, "SSH task allocation failed");
 }

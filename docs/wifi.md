@@ -3,9 +3,21 @@
 Change the network from your phone or computer. Settings are saved on the
 Chromatic and survive power-off; no rebuild or reinstall is needed.
 
-## Change Wi-Fi
+## Everyday controls
 
-1. Open the Chromatic's MENU and choose **WI-FI SETUP**.
+Open **MENU → WI-FI** to see the saved mode, network, address and SSH login.
+Choose **TURN WI-FI OFF** or **TURN WI-FI ON** with the control pad and **A**.
+The on/off choice survives restarts. Turning Wi-Fi off keeps the network name,
+password and station/hotspot mode; turning it back on uses them again. You cannot
+use SSH while Wi-Fi is off.
+
+Choose **CHANGE WI-FI / PASSWORD** only to change the network, hotspot name or
+password. This enables Wi-Fi and opens its temporary setup network. **B** closes
+setup and returns to the Wi-Fi controls; **MENU** resumes Apple II.
+
+## Set up or change a network
+
+1. Open **MENU → WI-FI → CHANGE WI-FI / PASSWORD**.
 2. On your phone or computer, join **CHROMATIC-XXXXXX**, using the setup password
    shown on the handheld. Stay connected when warned that there is no internet.
    The setup password has two uppercase words and four digits, such as
@@ -36,7 +48,7 @@ particular arrangement has not been physically tested.
 ## If the connection fails
 
 After about 25 seconds without a station connection, the Chromatic starts its
-protected setup network. Open **MENU → WI-FI SETUP** to see its name and password,
+protected setup network. Open **MENU → WI-FI → CHANGE WI-FI / PASSWORD** to see its name and password,
 then follow the steps above. Check the exact network name and password before
 saving again. Connection attempts pause during recovery so the setup network stays
 available. Saving new details or closing setup starts another attempt. You do not
@@ -62,9 +74,16 @@ Read the current address in **MENU → Device Info**, then connect:
 ssh apple@DEVICE_IP
 ```
 
-For a Chromatic hotspot, use `ssh apple@192.168.4.1`. Enter the SSH password from
-your private build settings. The SSH password is separate from the Wi-Fi password;
+For a Chromatic hotspot, use `ssh apple@192.168.4.1`. The username is lowercase
+`apple`. Read the SSH password on the handheld under **MENU → WI-FI** or in your
+private build settings. Generated passwords use two uppercase words and four
+digits, such as `MINT-LAKE-4826`. They are generated independently and stay saved
+across restarts and Wi-Fi changes. The SSH password is separate from the Wi-Fi password;
 changing Wi-Fi keeps the SSH identity, API token and cartridge programs intact.
+The SSH password appears only on the physical handheld, not in remote text
+snapshots. Custom passwords that the uppercase display cannot show faithfully
+use a **SEE PRIVATE SETTINGS** hint instead.
+
 One device can join the setup network or hotspot at a time. Only one SSH
 session is supported.
 
@@ -93,7 +112,8 @@ Or choose a hotspot as the initial mode:
 python3 tools/configure.py --wifi-mode hotspot --output build/hotspot-local.json
 ```
 
-The tool prompts for Wi-Fi and SSH settings, generates an API token, and writes
+The tool prompts for Wi-Fi and SSH settings, generates an API token and readable
+passwords when left blank, and writes
 an owner-only (`0600`) file. Follow [Building](build.md#esp32-application) and
 [installation and recovery](install.md). A diagnostic build without
 `PRIVATE_CONFIG` has networking disabled.

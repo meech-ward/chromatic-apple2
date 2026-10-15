@@ -2,6 +2,7 @@
 #include "../ssh_terminal.c"
 #include <assert.h>
 #include <stdlib.h>
+#include <setjmp.h>
 static uint8_t source[2048], keys[128], stored_seed[32];
 static size_t source_size, source_at, key_count, captured_size;
 static char text[1024], captured[8192];
@@ -9,14 +10,24 @@ static bool blocked, text_busy, interrupt_pending, stored;
 static size_t stored_size=32, write_limit=7;
 static unsigned random_calls, commits, creates;
 static int commit_error;
-static bool gate_test;
+static bool gate_test, lifecycle_test;
+static unsigned network_step, loop_delays, transport_polls, init_calls, enable_calls;
+static bool enable_values[8];
+static jmp_buf task_exit;
 static unsigned ready_polls, readiness_delays, seed_accesses;
 void esp_fill_random(void *p,size_t n) { random_calls++;memset(p,0x42,n); }
 int64_t esp_timer_get_time(void) { return 1000; }
-bool network_ready(void) { return !gate_test || ++ready_polls >= 4; }
+bool network_ready(void) {
+    if(lifecycle_test) {
+        static const bool states[]={true,true,false,false,true,true};
+        assert(network_step<sizeof(states)/sizeof(states[0]));
+        return states[network_step++];
+    }
+    return !gate_test || ++ready_polls >= 4;
+}
 esp_err_t nvs_open(const char *s,int mode,nvs_handle_t *h) { assert(!strcmp(s,"a2_ssh") && mode==NVS_READWRITE);*h=1;return 0; }
 esp_err_t nvs_get_blob(nvs_handle_t h,const char *key,void *p,size_t *n) {
-    (void)h;if(gate_test){assert(ready_polls==4);seed_accesses++;}
+    (void)h;if(gate_test)assert(ready_polls==4);if(gate_test || lifecycle_test)seed_accesses++;
     assert(!strcmp(key,"host_seed"));if(!stored)return ESP_ERR_NVS_NOT_FOUND;
     assert(*n>=stored_size);memcpy(p,stored_seed,stored_size);*n=stored_size;return 0;
 }
@@ -27,17 +38,23 @@ esp_err_t nvs_commit(nvs_handle_t h) { (void)h;commits++;return commit_error; }
 void nvs_close(nvs_handle_t h) { (void)h; }
 void vTaskDelay(unsigned ticks) {
     if(gate_test){assert(ticks==250 && !seed_accesses);readiness_delays++;}
+    if(lifecycle_test){assert(ticks==10);if(++loop_delays==5)longjmp(task_exit,1);}
 }
 void vTaskDelete(TaskHandle_t h) { (void)h; }
 int xTaskCreatePinnedToCore(void (*fn)(void *),const char *name,unsigned stack,void *arg,unsigned priority,TaskHandle_t *h,int core) {
-    assert(fn && !strcmp(name,"apple2_ssh") && stack==12288 && !arg && priority==3 && core==0);
+    assert(fn && !strcmp(name,"apple2_ssh") && stack==12288 && !arg && priority==5 && core==0);
     creates++;*h=(void *)1;return pdPASS;
 }
 void mbedtls_platform_zeroize(void *p,size_t n) { memset(p,0,n); }
-bool ssh_transport_init(const uint8_t seed[32],const char *password) { (void)seed;(void)password;return !gate_test; }
-bool ssh_transport_set_enabled(bool enabled) { return enabled; }
-void ssh_transport_poll(void) {}
-bool ssh_transport_connected(void) { return true; }
+bool ssh_transport_init(const uint8_t seed[32],const char *password) {
+    (void)seed;(void)password;if(lifecycle_test)init_calls++;return !gate_test;
+}
+bool ssh_transport_set_enabled(bool enabled) {
+    if(lifecycle_test){assert(enable_calls<sizeof(enable_values)/sizeof(enable_values[0]));enable_values[enable_calls++]=enabled;}
+    return true;
+}
+void ssh_transport_poll(void) { if(lifecycle_test)transport_polls++; }
+bool ssh_transport_connected(void) { return !lifecycle_test; }
 uint32_t ssh_transport_session_id(void) { return 1; }
 bool ssh_transport_take_interrupt(void) { bool p=interrupt_pending;interrupt_pending=false;return p; }
 bool ssh_transport_input_ended(void) { return false; }
@@ -101,6 +118,16 @@ int main(void) {
     assert(strstr(captured,"\033[6;1HAAAAX"));
     gate_test=true;stored=false;commit_error=0;ssh_task(NULL);
     assert(ready_polls==4 && readiness_delays==3 && seed_accesses==1);
-    puts("PASS actual SSH terminal: station/hotspot network readiness, durable/test-failed seed,12KiB task, arrows/Return/Backspace/menu/ESC/paste/interrupt, key backpressure, changed-row snapshots and partial output");
+
+    /* Radio off closes the listener/client once; radio on reuses the host key. */
+    gate_test=false;lifecycle_test=true;seed_accesses=0;
+    unsigned previous_random=random_calls, previous_commits=commits;
+    if(!setjmp(task_exit))ssh_task(NULL);
+    assert(network_step==6 && loop_delays==5 && transport_polls==3);
+    assert(enable_calls==3 && enable_values[0] && !enable_values[1] && enable_values[2]);
+    assert(init_calls==1 && seed_accesses==1);
+    assert(random_calls==previous_random && commits==previous_commits);
+    lifecycle_test=false;
+    puts("PASS actual SSH terminal: station/hotspot readiness and radio off/on without seed churn, durable/test-failed seed,12KiB task, arrows/Return/Backspace/menu/ESC/paste/interrupt, key backpressure, changed-row snapshots and partial output");
     return 0;
 }

@@ -13,7 +13,7 @@ connects the display, buttons, speaker and cartridge.
 - Cartridge-backed floppy images with persistent `SAVE`/`LOAD` changes.
 - A handheld program browser, on-screen keyboard and pause/resume menu.
 - An encrypted SSH terminal for typing from a computer.
-- Wi-Fi setup from a phone or computer, with existing-network and WPA2 hotspot modes.
+- Saved Wi-Fi on/off controls, phone-based setup, and WPA2 hotspot mode.
 - Approximately 1.023 MHz emulated CPU speed and partial display updates; see
   [measured performance](docs/verification.md). Disk service can pause emulation.
 

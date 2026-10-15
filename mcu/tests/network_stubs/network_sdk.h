@@ -63,6 +63,7 @@ esp_err_t esp_event_handler_register(esp_event_base_t, int32_t, event_handler_t,
 esp_err_t esp_wifi_set_mode(int);
 esp_err_t esp_wifi_set_config(int, const wifi_config_t *);
 esp_err_t esp_wifi_start(void);
+esp_err_t esp_wifi_stop(void);
 esp_err_t esp_wifi_connect(void);
 esp_err_t esp_wifi_disconnect(void);
 esp_err_t esp_wifi_get_mode(wifi_mode_t *);

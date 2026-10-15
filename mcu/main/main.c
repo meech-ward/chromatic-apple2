@@ -5,6 +5,8 @@
 #include "cart_commands.h"
 #include "cart_storage.h"
 #include "handheld_ui.h"
+#include "network.h"
+#include "private_config.h"
 #include "rom_image.h"
 #include "shell_link.h"
 #include "ssh/ssh_terminal.h"
@@ -132,13 +134,29 @@ static void append(char *output, size_t capacity, const char *format, ...)
     va_end(args);
 }
 
-static void render_ui_unlocked(void)
+static const char *display_ssh_password(bool physical)
+{
+    if (!DEVICE_SSH_ENABLED) return "SSH IS NOT CONFIGURED";
+    if (!physical) return "SHOWN ON THE HANDHELD";
+    /* The compact Apple II font cannot faithfully show lowercase or UTF-8.
+     * Generated word passwords are uppercase; custom passwords retain their
+     * exact bytes and use the private settings file when this font cannot. */
+    for (const unsigned char *p=(const unsigned char *)DEVICE_SSH_PASSWORD; *p; ++p)
+        if (*p<32 || *p>95) return "SEE PRIVATE SETTINGS";
+    return DEVICE_SSH_PASSWORD;
+}
+
+static void render_ui_unlocked(bool physical)
 {
     char input[41];
     apple2_text_line(&machine,23,input);
     network_setup_info_t wifi;
     network_setup_info(&wifi);
     const handheld_ui_info_t info={.ip=network_ip(),
+        .wifi_enabled=wifi.enabled,.wifi_hotspot=wifi.hotspot,
+        .wifi_ssid=wifi.network_ssid,.wifi_status=wifi.state,
+        .ssh_user=DEVICE_SSH_ENABLED ? "APPLE (LOWERCASE)" : "NOT CONFIGURED",
+        .ssh_password=display_ssh_password(physical),
         .wifi_setup_ssid=wifi.ssid,.wifi_setup_password=wifi.password,
         .wifi_setup_url=wifi.url,.wifi_setup_status=wifi.status,
         .free_heap=heap_caps_get_free_size(MALLOC_CAP_8BIT),
@@ -153,7 +171,7 @@ static void text_unlocked(char *output, size_t capacity)
 {
     output[0] = 0;
     char line[41];
-    if (handheld_ui_visible(&ui)) render_ui_unlocked();
+    if (handheld_ui_visible(&ui)) render_ui_unlocked(false);
     for (unsigned row = 0; row < 24; ++row) {
         if (handheld_ui_visible(&ui)) {
             const unsigned address=((row&7)<<7)+(row>>3)*40;
@@ -163,6 +181,7 @@ static void text_unlocked(char *output, size_t capacity)
             }
             line[40]=0;
             if (ui.mode==HANDHELD_UI_MENU && row==4+ui.menu_selection*2) line[0]='>';
+            if (ui.mode==HANDHELD_UI_WIFI && row==(ui.wifi_selection ? 19u : 17u)) line[0]='>';
             if (ui.mode==HANDHELD_UI_PROGRAMS && ui.catalog.count &&
                 row==4+ui.program_selection-ui.program_scroll) line[0]='>';
         } else if (!machine.text_mode && (!machine.mixed_mode || row<20)) {
@@ -180,9 +199,11 @@ void control_text(char *output, size_t capacity)
     xSemaphoreGive(machine_lock);
 }
 
+/* Queue long enough to cross a normal CPU/video update. A 2 ms timeout could
+ * repeatedly miss the lock and leave SSH input/snapshots stale for seconds. */
 bool control_terminal_text(char *output,size_t capacity)
 {
-    if (!output || !capacity || xSemaphoreTake(machine_lock,pdMS_TO_TICKS(2))!=pdTRUE) return false;
+    if (!output || !capacity || xSemaphoreTake(machine_lock,pdMS_TO_TICKS(25))!=pdTRUE) return false;
     text_unlocked(output,capacity);
     xSemaphoreGive(machine_lock);
     return true;
@@ -190,7 +211,7 @@ bool control_terminal_text(char *output,size_t capacity)
 
 bool control_terminal_key(unsigned char key)
 {
-    if (xSemaphoreTake(machine_lock,pdMS_TO_TICKS(2))!=pdTRUE) return false;
+    if (xSemaphoreTake(machine_lock,pdMS_TO_TICKS(25))!=pdTRUE) return false;
     bool accepted=false;
     uint16_t button=0;
     if (key==29) button=HANDHELD_BTN_MENU;
@@ -307,6 +328,20 @@ bool control_command(const char *command, char *output, size_t capacity)
     if (!capacity) return false;
     output[0] = 0;
     if (!command || strlen(command) > 255) { append(output, capacity, "ERROR command too long\n"); return false; }
+    /* Network controls do not touch emulated state. Keep them usable while a
+     * slow/absent cartridge controller holds the machine lock. */
+    if (!strcmp(command,"wifi status")) {
+        network_setup_info_t wifi;
+        network_setup_info(&wifi);
+        append(output,capacity,"Wi-Fi enabled=%u mode=%s ip=%s\n",wifi.enabled,
+               wifi.hotspot ? "hotspot" : "station",network_ip());
+        return true;
+    }
+    if (!strcmp(command,"wifi on") || !strcmp(command,"wifi off")) {
+        const bool ok=network_set_enabled(!strcmp(command,"wifi on"));
+        append(output,capacity,ok ? "OK Wi-Fi change queued\n" : "ERROR Wi-Fi unavailable\n");
+        return ok;
+    }
     xSemaphoreTake(machine_lock, portMAX_DELAY);
     bool ok = true;
     if (!strncmp(command, "a2 type ", 8)) {
@@ -493,6 +528,13 @@ static void input_task(void *unused)
                 if (!network_setup_start()) snprintf(ui_status,sizeof(ui_status),"WI-FI SETUP UNAVAILABLE - TRY AGAIN");
             }
             if (event.action==HANDHELD_ACTION_STOP_WIFI_SETUP) network_setup_stop();
+            if (event.action==HANDHELD_ACTION_TOGGLE_WIFI) {
+                network_setup_info_t wifi;
+                network_setup_info(&wifi);
+                if (!network_set_enabled(!wifi.enabled))
+                    snprintf(ui_status,sizeof(ui_status),"WI-FI CHANGE UNAVAILABLE - TRY AGAIN");
+                else ui_status[0]=0;
+            }
             if (event.action==HANDHELD_ACTION_OPEN_PROGRAMS) refresh_programs();
             if (catalog_pending && !cart_storage_saving()) refresh_programs();
             if (event.action==HANDHELD_ACTION_RUN_PROGRAM) {
@@ -532,7 +574,7 @@ static void video_task(void *unused)
         atomic_fetch_add(&video_wait_us,(unsigned)(render_begin-now));
         cart_storage_autoboot();
         if (handheld_ui_visible(&ui)) {
-            render_ui_unlocked();
+            render_ui_unlocked(true);
             a2_render_page(overlay,(now/500000)&1,15,framebuffer);
         } else a2_render_screen(machine.ram,machine.text_mode,machine.page_two,
                      machine.mixed_mode,machine.hires_mode,(now/500000)&1,12,framebuffer);
@@ -589,6 +631,7 @@ void app_main(void)
         {.command = "storage", .help = "Cartridge floppy disk storage", .func = console_command},
         {.command = "audio", .help = "Speaker diagnostics", .func = console_command},
         {.command = "ssh", .help = "SSH terminal status", .func = console_command},
+        {.command = "wifi", .help = "Saved Wi-Fi on/off/status", .func = console_command},
     };
     for (unsigned i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i)
         ESP_ERROR_CHECK(esp_console_cmd_register(commands + i));
@@ -597,6 +640,8 @@ void app_main(void)
     printf("CHROMATIC_APPLE2_READY rom=%s ram=49152 machine=%u diagnostic=%02x free_heap=%u\n",
            a2_rom_kind, (unsigned)sizeof(machine), machine.ram[0x200],
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT));
+    /* Start networking before cartridge/emulation work can occupy the CPU. */
+    network_start();
     ESP_ERROR_CHECK(xTaskCreate(cpu_task, "apple2_cpu", 6144, NULL, 4, NULL) == pdPASS
                     ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(input_task, "apple2_input", 6144, NULL, 3, NULL) == pdPASS
@@ -605,6 +650,5 @@ void app_main(void)
      * SPI DMA blocks while sending, leaving those tasks time to run. */
     ESP_ERROR_CHECK(xTaskCreate(video_task, "apple2_video", 6144, NULL, 3, NULL) == pdPASS
                     ? ESP_OK : ESP_ERR_NO_MEM);
-    network_start();
     ssh_terminal_start();
 }

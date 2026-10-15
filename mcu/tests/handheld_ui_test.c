@@ -231,9 +231,10 @@ static void program_browser(void)
     assert(catalog.programs[A2_DOS_MAX_PROGRAMS - 1].name[A2_DOS_NAME_BYTES - 1] == 'X');
 }
 
-static void wifi_setup(void)
+static void wifi_controls(void)
 {
     handheld_ui_t ui;
+    assert(HANDHELD_UI_WIFI_SETUP == 5 && HANDHELD_UI_WIFI == 6);
     open_menu(&ui);
     tap(&ui, HANDHELD_BTN_UP);
     assert(ui.menu_selection == 7); /* Existing menu indices remain unchanged. */
@@ -242,9 +243,58 @@ static void wifi_setup(void)
     };
     char row[41];
     handheld_ui_render(&ui, NULL, guarded.page);
-    decode_row(guarded.page, 18, row); assert(strstr(row, "WI-FI SETUP"));
+    decode_row(guarded.page, 18, row); assert(strstr(row, "WI-FI") && !strstr(row, "SETUP"));
     handheld_ui_event_t event = settle(&ui, HANDHELD_BTN_A);
-    assert(event.action == HANDHELD_ACTION_START_WIFI_SETUP);
+    assert(event.action == HANDHELD_ACTION_NONE && event.changed);
+    assert(ui.mode == HANDHELD_UI_WIFI && handheld_ui_pauses_emulation(&ui));
+    assert(handheld_ui_update(&ui, HANDHELD_BTN_A, now + 1000).action == HANDHELD_ACTION_NONE);
+    now += 1001;
+    release(&ui);
+    handheld_ui_render(&ui, NULL, guarded.page);
+    decode_row(guarded.page, 2, row); assert(strstr(row, "JOIN NETWORK") && strstr(row, "OFF"));
+    decode_row(guarded.page, 5, row); assert(strstr(row, "NOT SET"));
+    decode_row(guarded.page, 7, row); assert(strstr(row, "NOT CONNECTED"));
+    decode_row(guarded.page, 11, row); assert(strstr(row, "SEE PRIVATE SETTINGS"));
+    decode_row(guarded.page, 17, row); assert(strstr(row, "TURN WI-FI ON"));
+    decode_row(guarded.page, 19, row); assert(strstr(row, "CHANGE WI-FI / PASSWORD"));
+    decode_row(guarded.page, 21, row); assert(strstr(row, "KEPT WHEN OFF OR RESTARTED"));
+    assert(tap(&ui, HANDHELD_BTN_A).action == HANDHELD_ACTION_TOGGLE_WIFI);
+    assert(ui.mode == HANDHELD_UI_WIFI && ui.wifi_selection == 0);
+    handheld_ui_info_t info = {
+        .wifi_enabled = true, .wifi_hotspot = true, .wifi_ssid = "MY-CHROMATIC",
+        .ip = "192.168.4.1", .wifi_status = "HOTSPOT READY", .ssh_user = "apple",
+        .ssh_password = "MINT-LAKE-4826", .wifi_setup_ssid = "CHROMATIC-123ABC",
+        .wifi_setup_password = "PINE-BOAT-1234", .wifi_setup_url = "http://192.168.4.1",
+        .wifi_setup_status = "READY FOR SETUP", .status = "UNRELATED BASIC STATUS"
+    };
+    handheld_ui_render(&ui, &info, guarded.page);
+    decode_row(guarded.page, 2, row); assert(strstr(row, "HOTSPOT") && strstr(row, "ON"));
+    decode_row(guarded.page, 5, row); assert(strstr(row, "MY-CHROMATIC"));
+    decode_row(guarded.page, 7, row); assert(strstr(row, "IP: 192.168.4.1"));
+    decode_row(guarded.page, 9, row); assert(strstr(row, "SSH USER: APPLE"));
+    decode_row(guarded.page, 11, row); assert(strstr(row, "MINT-LAKE-4826"));
+    decode_row(guarded.page, 12, row); assert(strspn(row, " ") == 40);
+    decode_row(guarded.page, 14, row); assert(strstr(row, "HOTSPOT READY"));
+    decode_row(guarded.page, 17, row); assert(strstr(row, "TURN WI-FI OFF"));
+    decode_row(guarded.page, 21, row); assert(!strstr(row, "UNRELATED"));
+    assert(tap(&ui, HANDHELD_BTN_LEFT).action == HANDHELD_ACTION_NONE && !ui.wifi_selection);
+    assert(tap(&ui, HANDHELD_BTN_DOWN).changed && ui.wifi_selection == 1);
+    handheld_ui_render(&ui, &info, guarded.page);
+    const unsigned selected_address = ((19 & 7) << 7) + (19 >> 3) * 40;
+    assert(guarded.page[selected_address] < 0x40);
+    assert(tap(&ui, HANDHELD_BTN_DOWN).changed && ui.wifi_selection == 0);
+    assert(tap(&ui, HANDHELD_BTN_UP).changed && ui.wifi_selection == 1);
+    char long_password[64];
+    memset(long_password, 'A', 39);
+    memset(long_password + 39, 'B', 24);
+    long_password[63] = 0;
+    info.ssh_password = long_password;
+    handheld_ui_render(&ui, &info, guarded.page);
+    decode_row(guarded.page, 11, row); assert(row[0] == ' ' && strspn(row + 1, "A") == 39);
+    decode_row(guarded.page, 12, row); assert(strspn(row + 1, "B") == 24 && row[25] == ' ');
+    assert(guarded.before == 0x12 && guarded.after == 0x34);
+    event = settle(&ui, HANDHELD_BTN_A);
+    assert(event.action == HANDHELD_ACTION_START_WIFI_SETUP && event.changed);
     assert(ui.mode == HANDHELD_UI_WIFI_SETUP && handheld_ui_pauses_emulation(&ui));
     assert(handheld_ui_update(&ui, HANDHELD_BTN_A, now + 1000).action == HANDHELD_ACTION_NONE);
     now += 1001;
@@ -257,18 +307,14 @@ static void wifi_setup(void)
     decode_row(guarded.page, 7, row); assert(strstr(row, "PLEASE WAIT"));
     decode_row(guarded.page, 11, row); assert(strstr(row, "HTTP://192.168.4.1"));
     decode_row(guarded.page, 16, row); assert(strstr(row, "KEPT UNTIL SAVE"));
-    handheld_ui_info_t info = {
-        .wifi_setup_ssid = "CHROMATIC-123ABC", .wifi_setup_password = "MINT-LAKE-4826",
-        .wifi_setup_url = "http://192.168.4.1", .wifi_setup_status = "READY FOR SETUP",
-        .status = "UNRELATED BASIC STATUS"
-    };
     handheld_ui_render(&ui, &info, guarded.page);
     decode_row(guarded.page, 2, row); assert(strstr(row, "JOIN THIS WI-FI NETWORK"));
     decode_row(guarded.page, 4, row); assert(strstr(row, "CHROMATIC-123ABC"));
-    decode_row(guarded.page, 7, row); assert(strstr(row, "MINT-LAKE-4826"));
+    decode_row(guarded.page, 7, row); assert(strstr(row, "PINE-BOAT-1234"));
     decode_row(guarded.page, 9, row); assert(strstr(row, "PHONE BROWSER"));
     decode_row(guarded.page, 13, row); assert(strstr(row, "CHOOSE WI-FI AND SAVE"));
     decode_row(guarded.page, 16, row); assert(strstr(row, "READY FOR SETUP"));
+    decode_row(guarded.page, 20, row); assert(strstr(row, "RETURN TO WI-FI"));
     decode_row(guarded.page, 21, row); assert(!strstr(row, "UNRELATED"));
     assert(guarded.before == 0x12 && guarded.after == 0x34);
     char long_value[100]; memset(long_value, 'X', sizeof(long_value) - 1);
@@ -278,10 +324,21 @@ static void wifi_setup(void)
     handheld_ui_render(&ui, &info, guarded.page);
     assert(guarded.before == 0x12 && guarded.after == 0x34);
     assert(tap(&ui, HANDHELD_BTN_B).action == HANDHELD_ACTION_STOP_WIFI_SETUP);
-    assert(ui.mode == HANDHELD_UI_MENU && ui.menu_selection == 7);
+    assert(ui.mode == HANDHELD_UI_WIFI && ui.wifi_selection == 1);
     assert(tap(&ui, HANDHELD_BTN_A).action == HANDHELD_ACTION_START_WIFI_SETUP);
     assert(tap(&ui, HANDHELD_BTN_MENU).action == HANDHELD_ACTION_STOP_WIFI_SETUP);
     assert(!handheld_ui_visible(&ui) && !handheld_ui_pauses_emulation(&ui));
+
+    /* Browsing status does not start or stop setup, and B preserves main selection. */
+    assert(tap(&ui, HANDHELD_BTN_MENU).action == HANDHELD_ACTION_NONE);
+    tap(&ui, HANDHELD_BTN_UP);
+    assert(tap(&ui, HANDHELD_BTN_A).action == HANDHELD_ACTION_NONE);
+    assert(ui.mode == HANDHELD_UI_WIFI && !ui.wifi_selection);
+    assert(tap(&ui, HANDHELD_BTN_B).action == HANDHELD_ACTION_NONE);
+    assert(ui.mode == HANDHELD_UI_MENU && ui.menu_selection == 7);
+    tap(&ui, HANDHELD_BTN_A);
+    assert(tap(&ui, HANDHELD_BTN_MENU).action == HANDHELD_ACTION_RESUME);
+    assert(!handheld_ui_visible(&ui));
 }
 
 int main(void)
@@ -289,7 +346,7 @@ int main(void)
     hidden_controls();
     injected_buttons();
     program_browser();
-    wifi_setup();
+    wifi_controls();
     handheld_ui_t ui;
     handheld_ui_init(&ui);
     assert(!handheld_ui_visible(&ui));
@@ -360,7 +417,7 @@ int main(void)
     const handheld_ui_action_t actions[] = {
         HANDHELD_ACTION_OPEN_PROGRAMS, HANDHELD_ACTION_RESUME, HANDHELD_ACTION_NONE,
         HANDHELD_ACTION_SAVE_BASIC, HANDHELD_ACTION_LOAD_BASIC, HANDHELD_ACTION_RESTART,
-        HANDHELD_ACTION_NONE, HANDHELD_ACTION_START_WIFI_SETUP
+        HANDHELD_ACTION_NONE, HANDHELD_ACTION_NONE
     };
     for (unsigned selection = 0; selection < 8; ++selection) {
         open_menu(&ui);
@@ -370,7 +427,7 @@ int main(void)
         if (selection == 0) assert(ui.mode == HANDHELD_UI_PROGRAMS);
         else if (selection == 2) assert(ui.mode == HANDHELD_UI_KEYBOARD);
         else if (selection == 6) assert(ui.mode == HANDHELD_UI_INFO && handheld_ui_pauses_emulation(&ui));
-        else if (selection == 7) assert(ui.mode == HANDHELD_UI_WIFI_SETUP && handheld_ui_pauses_emulation(&ui));
+        else if (selection == 7) assert(ui.mode == HANDHELD_UI_WIFI && handheld_ui_pauses_emulation(&ui));
         else assert(!handheld_ui_visible(&ui));
     }
 
@@ -405,6 +462,6 @@ int main(void)
     assert(event.changed && ui.mode == HANDHELD_UI_MENU && ui.menu_selection == 0);
     handheld_ui_update(&ui, HANDHELD_BTN_MENU | HANDHELD_BTN_DOWN, 1000);
     assert(ui.menu_selection == 0); // Transition blocks already-held directions.
-    printf("PASS handheld UI: latched injected press/release/backpressure, program browser selection/scroll/run/empty/errors, Wi-Fi setup action/instructions/back/resume, pause policy, hidden Return/Break/cursor keys, debounce, bounded repeat, keyboard/menu actions, transition priority, text bounds, timer wrap; state=%zu bytes\n", sizeof(ui));
+    printf("PASS handheld UI: latched injected press/release/backpressure, program browser selection/scroll/run/empty/errors, Wi-Fi persistent-controls/toggle/setup/back/resume/password wrapping, pause policy, hidden Return/Break/cursor keys, debounce, bounded repeat, keyboard/menu actions, transition priority, text bounds, timer wrap; state=%zu bytes\n", sizeof(ui));
     return 0;
 }

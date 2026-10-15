@@ -1,5 +1,10 @@
 # Controls, disks and remote access
 
+**MENU → WI-FI** shows the current network, address and SSH login. Its **TURN
+WI-FI ON/OFF** control remembers the choice and keeps your saved network settings.
+Use **CHANGE WI-FI / PASSWORD** for one-time setup or later edits; see the
+[Wi-Fi guide](wifi.md).
+
 ## Handheld controls
 
 | Control | Machine view | Menu / program browser |
@@ -60,7 +65,7 @@ attached to the SSH computer works normally.
 | Location | Contents |
 | --- | --- |
 | ESP32 flash | Firmware, supplied ROMs and private network settings |
-| ESP32 NVS | Selected disk name and generated SSH host identity |
+| ESP32 NVS | Selected disk, SSH host identity, Wi-Fi profile, setup password and on/off choice |
 | ESP32 RAM | 48 KiB Apple memory, running program and disk/display buffers; volatile |
 | Cartridge 4 MiB flash | Floppy images, filesystem and persistent SAVE journals |
 

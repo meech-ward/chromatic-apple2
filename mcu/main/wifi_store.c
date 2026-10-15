@@ -120,3 +120,70 @@ esp_err_t wifi_store_setup_key(char output[WIFI_SETUP_PASSWORD_BYTES],
     memcpy(output, saved, sizeof(saved));
     return ESP_OK;
 }
+
+#define WIFI_ENABLED_KEY "enabled"
+#define WIFI_ENABLED_BYTES 2
+
+static esp_err_t load_enabled_blob(uint8_t blob[WIFI_ENABLED_BYTES])
+{
+    nvs_handle_t handle;
+    esp_err_t error = nvs_open(WIFI_NAMESPACE, NVS_READONLY, &handle);
+    if (error != ESP_OK) return error;
+    size_t length = WIFI_ENABLED_BYTES;
+    error = nvs_get_blob(handle, WIFI_ENABLED_KEY, blob, &length);
+    nvs_close(handle);
+    if (error == ESP_OK && length != WIFI_ENABLED_BYTES)
+        error = ESP_ERR_INVALID_SIZE;
+    return error;
+}
+
+esp_err_t wifi_store_load_enabled(bool *enabled)
+{
+    if (!enabled) return ESP_ERR_INVALID_ARG;
+    uint8_t blob[WIFI_ENABLED_BYTES];
+    const esp_err_t error = load_enabled_blob(blob);
+    if (error != ESP_OK) return error;
+    if (blob[0] != 1 || blob[1] > 1) return ESP_ERR_INVALID_RESPONSE;
+    *enabled = blob[1] != 0;
+    return ESP_OK;
+}
+
+static esp_err_t write_enabled_blob(const uint8_t *blob)
+{
+    nvs_handle_t handle;
+    esp_err_t error = nvs_open(WIFI_NAMESPACE, NVS_READWRITE, &handle);
+    if (error != ESP_OK) return error;
+    error = blob ? nvs_set_blob(handle, WIFI_ENABLED_KEY, blob, WIFI_ENABLED_BYTES) :
+                   nvs_erase_key(handle, WIFI_ENABLED_KEY);
+    if (!blob && error == ESP_ERR_NVS_NOT_FOUND) error = ESP_OK;
+    if (error == ESP_OK) error = nvs_commit(handle);
+    nvs_close(handle);
+    return error;
+}
+
+static bool matches_enabled_blob(const uint8_t *expected)
+{
+    uint8_t actual[WIFI_ENABLED_BYTES];
+    const esp_err_t error = load_enabled_blob(actual);
+    return expected ? error == ESP_OK && !memcmp(actual, expected, sizeof(actual)) :
+                      error == ESP_ERR_NVS_NOT_FOUND;
+}
+
+esp_err_t wifi_store_save_enabled(bool enabled)
+{
+    const uint8_t next[WIFI_ENABLED_BYTES] = {1, enabled ? 1 : 0};
+    uint8_t previous[WIFI_ENABLED_BYTES];
+    esp_err_t error = load_enabled_blob(previous);
+    const bool had_previous = error == ESP_OK;
+    if (!had_previous && error != ESP_ERR_NVS_NOT_FOUND) return error;
+    if (had_previous && !memcmp(previous, next, sizeof(next))) return ESP_OK;
+    error = write_enabled_blob(next);
+    if (error == ESP_OK && matches_enabled_blob(next)) return ESP_OK;
+    if (error == ESP_OK) error = ESP_ERR_INVALID_RESPONSE;
+    const uint8_t *restore = had_previous ? previous : NULL;
+    /* The failed commit may have persisted; prove the previous value/absence
+     * through a fresh handle even if the compensating write also reports failure.
+     */
+    (void)write_enabled_blob(restore);
+    return matches_enabled_blob(restore) ? error : ESP_ERR_INVALID_STATE;
+}

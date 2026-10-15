@@ -23,3 +23,11 @@ esp_err_t wifi_store_save(const wifi_profile_t *profile);
  */
 esp_err_t wifi_store_setup_key(char output[WIFI_SETUP_PASSWORD_BYTES],
                                const char candidate[WIFI_SETUP_PASSWORD_BYTES]);
+
+/* Independent power preference: NOT_FOUND leaves enabled untouched, and callers
+ * use true for the initial default. Saving does not change the network profile
+ * or setup password. A failed save verifies rollback before returning; an
+ * INVALID_STATE result means the previous preference could not be confirmed.
+ */
+esp_err_t wifi_store_load_enabled(bool *enabled);
+esp_err_t wifi_store_save_enabled(bool enabled);
